@@ -1,5 +1,5 @@
 .vscode
-tags
+.tags
 
 # Python-generated files
 __pycache__/
