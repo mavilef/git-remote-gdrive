@@ -5,5 +5,3 @@ class GoogleDriveRemote(object):
     def get_capabilities(self) -> list[str]:
         return []
 
-
-
