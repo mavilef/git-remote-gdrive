@@ -1,9 +1,10 @@
 import logging
+import os
 import sys
-from google_drive_remote import GoogleDriveRemote
+from .google_drive_remote import GoogleDriveRemote
 from argparse import ArgumentParser
 
-from utils import validate_google_drive_url
+from .utils import validate_google_drive_url
 
 logger = logging.getLogger(__name__)
 formatter = logging.Formatter("[%(asctime)s][%(name)s][%(levelname)s] %(message)s")
@@ -21,7 +22,7 @@ else:
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser(
         prog="git-gdrive-remote",
         description="""A helper to use google drive as remote in git""",
@@ -50,7 +51,12 @@ if __name__ == "__main__":
         logger.error(e)
         sys.exit(1)
 
-    gdrive_remote = GoogleDriveRemote(folder_id)
+    credentials_path = os.environ.get("GDRIVE_CREDENTIALS_PATH")
+    if not credentials_path:
+        logger.error("GDRIVE_CREDENTIALS_PATH environment variable not set.")
+        sys.exit(1)
+
+    gdrive_remote = GoogleDriveRemote(folder_id, credentials_path)
 
     while True:
         command = input()
@@ -61,3 +67,6 @@ if __name__ == "__main__":
 
         if command == "":
             break
+
+if __name__ == "__main__":
+    main()

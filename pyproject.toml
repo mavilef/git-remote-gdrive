@@ -1,20 +1,23 @@
 [project]
-name = "git-gdrive-remote"
+name = "git_gdrive_remote"
 version = "0.1.0"
 description = "A git remote's helper for google drive"
-authors = ["Marcelo Vilela <marcelo.filho.cps@gmail.com>"]
+authors = [{name = "Marcelo Vilela", email = "marcelo.filho.cps@gmail.com"}]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.13"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Topic :: Software Development :: Version Control",
-    "Topic :: Utilities",
-]
+
 
 dependencies = [
     "google-api-python-client>=2.169.0",
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.2.2",
 ]
+
+[project.scripts]
+git-gdrive-remote = "src.app:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+
