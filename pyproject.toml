@@ -1,5 +1,5 @@
 [project]
-name = "git_gdrive_remote"
+name = "git-remote-gdrive"
 version = "0.1.0"
 description = "A git remote's helper for google drive"
 authors = [{name = "Marcelo Vilela", email = "marcelo.filho.cps@gmail.com"}]
@@ -12,6 +12,7 @@ dependencies = [
     "google-api-python-client>=2.169.0",
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.2.2",
+    "GitPython>=3.1.43",
 ]
 
 [project.scripts]
