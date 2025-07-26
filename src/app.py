@@ -1,7 +1,8 @@
 import logging
 import os
 import sys
-from .google_drive_remote import GoogleDriveRemote
+from .git_remote import GitRemote
+from .google_drive_client_impl import GoogleDriveClientImpl
 from argparse import ArgumentParser
 
 from .utils import validate_google_drive_url
@@ -56,16 +57,24 @@ def main():
         logger.error("GDRIVE_CREDENTIALS_PATH environment variable not set.")
         sys.exit(1)
 
-    gdrive_remote = GoogleDriveRemote(folder_id, credentials_path)
+    client = GoogleDriveClientImpl(credentials_path)
+    git_remote = GitRemote(folder_id, client)
 
     while True:
-        command = input()
+        try:
+            command = input()
+        except EOFError:
+            break # End of input, typically when Git closes the pipe
 
         if command == "capabilities":
-            for capability in gdrive_remote.get_capabilities():
+            for capability in git_remote.get_capabilities():
                 print(capability)
-
-        if command == "":
+            print() # Blank line to end capabilities
+        elif command == "list":
+            for ref in git_remote.list_refs():
+                print(ref)
+            print() # Blank line to end list
+        elif command == "":
             break
 
 if __name__ == "__main__":
