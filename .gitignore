@@ -1,5 +1,7 @@
 .vscode
 .tags
+tags
+*.swp
 
 # Python-generated files
 __pycache__/

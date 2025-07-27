@@ -17,6 +17,8 @@ dependencies = [
 
 [project.scripts]
 git-remote-gdrive = "src.app:main"
+git-remote-gd = "src.app:main"
+git-remote-google-drive = "src.app:main"
 
 [tool.setuptools]
 packages = ["src"]

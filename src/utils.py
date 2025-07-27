@@ -1,6 +1,6 @@
 import re
 
-def validate_google_drive_url(url: str) -> str:
+def get_folder_id_from_google_drive_url(url: str) -> str:
     """Validate google drive url, returning the folder id
 
 
