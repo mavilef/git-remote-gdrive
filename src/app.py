@@ -1,22 +1,16 @@
+import src.log_config
+
 import logging
 import os
 import sys
+import re
 from .git_remote import GitRemote
 from .google_drive_client_impl import GoogleDriveClientImpl
 from argparse import ArgumentParser
 
-from .utils import get_folder_id_from_google_drive_url
+from .utils import get_folder_id_from_google_drive_url, process_command
 
 logger = logging.getLogger(__name__)
-formatter = logging.Formatter("[%(asctime)s][%(name)s][%(levelname)s] %(message)s")
-
-# Set logging level to INFO for debugging
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stderr)
-handler.setLevel(logging.INFO)
-
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
 def main():
     parser = ArgumentParser(
@@ -46,15 +40,29 @@ def main():
         logger.error(e)
         sys.exit(1)
 
-    credentials_path = os.environ.get("GDRIVE_CREDENTIALS_PATH")
-    if not credentials_path:
-        logger.error("GDRIVE_CREDENTIALS_PATH environment variable not set.")
-        sys.exit(1)
+#    credentials_path = os.environ.get("GDRIVE_CREDENTIALS_PATH")
+#    if not credentials_path:
+#        logger.error("GDRIVE_CREDENTIALS_PATH environment variable not set.")
+#        sys.exit(1)
+#
+    #client = GoogleDriveClientImpl(credentials_path)
+    #git_remote = GitRemote(folder_id, client)
 
-    client = GoogleDriveClientImpl(credentials_path)
-    git_remote = GitRemote(folder_id, client)
+    command_map = {
+        re.compile("capabilities"): lambda : logger.info("no capabilities"),
+    }
+
 
     logger.info("Starting command loop...")
-        
+    while True:
+        cmd = sys.stdin.readline()        
+
+        if not cmd:
+            logger.info("Received endline")
+            break
+
+        logger.info(f"Received command: {cmd}")
+        process_command(cmd, command_map)
+
 if __name__ == "__main__":
     main()
