@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Callable
 from typing import TextIO
 
+from .byte_progress import ByteProgressReporter
 from .errors import GitRemoteGDriveError, ProtocolError
 from .remote import FetchRequest, GitDriveRemote, PushRequest
 
@@ -24,12 +26,14 @@ class RemoteHelperProtocol:
         *,
         prepare_push: Callable[[], None] | None = None,
         prepare_fetch: Callable[[list[str]], None] | None = None,
+        stderr: TextIO | None = None,
     ) -> None:
         self.remote_factory = remote_factory
         self.stdin = stdin
         self.stdout = stdout
         self.prepare_push = prepare_push
         self.prepare_fetch = prepare_fetch
+        self.stderr = stderr if stderr is not None else sys.stderr
         self._remote: GitDriveRemote | None = None
         self.options = {
             "verbosity": 1,
@@ -130,10 +134,24 @@ class RemoteHelperProtocol:
                 raise ProtocolError(f"malformed fetch command: {command!r}")
             requests.append(FetchRequest(parts[1], parts[2]))
 
-        self.remote.fetch(
-            requests,
-            check_connectivity=bool(self.options["check-connectivity"]),
+        reporter = (
+            ByteProgressReporter(self.stderr, label="Drive")
+            if self.options["cloning"] and self.options["progress"]
+            else None
         )
+        try:
+            self.remote.fetch(
+                requests,
+                check_connectivity=bool(self.options["check-connectivity"]),
+                progress=(
+                    (lambda bundle, transferred: reporter.report(
+                        "download", bundle.name, transferred, bundle.size
+                    )) if reporter is not None else None
+                ),
+            )
+        finally:
+            if reporter is not None:
+                reporter.finish()
         if self.options["cloning"] and self.prepare_fetch is not None:
             # Clone has the objects but no local refs yet. Configure filters
             # before acknowledging the fetch so Git can use them for checkout.

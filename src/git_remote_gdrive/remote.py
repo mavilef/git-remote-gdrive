@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,7 +89,13 @@ class GitDriveRemote:
         lines.extend(f"{oid} {name}" for name, oid in sorted(manifest.refs.items()))
         return lines
 
-    def fetch(self, requests: list[FetchRequest], *, check_connectivity: bool) -> None:
+    def fetch(
+        self,
+        requests: list[FetchRequest],
+        *,
+        check_connectivity: bool,
+        progress: Callable[[BundleRecord, int], None] | None = None,
+    ) -> None:
         manifest = self._manifest().manifest
         self._check_object_format(manifest)
 
@@ -111,7 +118,13 @@ class GitDriveRemote:
                     self.repository.has_object(oid) for oid in bundle.tips
                 ):
                     continue
-                bundle_path = self.store.cached_bundle(bundle)
+                bundle_path = self.store.cached_bundle(
+                    bundle,
+                    progress=(
+                        (lambda transferred: progress(bundle, transferred))
+                        if progress is not None else None
+                    ),
+                )
                 self.repository.unbundle(bundle_path)
 
         missing = [oid for oid in requested_ids if not self.repository.has_object(oid)]

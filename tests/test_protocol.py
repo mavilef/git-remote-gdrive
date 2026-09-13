@@ -1,8 +1,9 @@
 import io
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
-from git_remote_gdrive.errors import ConfigurationError
+from git_remote_gdrive.errors import ConfigurationError, DriveError
 from git_remote_gdrive.protocol import RemoteHelperProtocol
 
 
@@ -118,6 +119,62 @@ class TestRemoteHelperProtocol(unittest.TestCase):
         self.assertEqual(protocol.run(), 0)
         prepare.assert_not_called()
         self.assertEqual(output.getvalue(), "\n")
+
+    def test_clone_progress_is_on_stderr_and_honors_options(self):
+        for options, visible in (
+            ("option cloning true\n", True),
+            ("option cloning true\noption progress false\n", False),
+            ("option cloning true\noption verbosity 0\noption progress false\n", False),
+            ("option cloning true\noption verbosity 0\noption progress true\n", True),
+            ("", False),
+        ):
+            with self.subTest(options=options):
+                remote = Mock()
+                output, errors = io.StringIO(), io.StringIO()
+
+                def fetch(requests, *, check_connectivity, progress):
+                    self.assertEqual(progress is not None, visible)
+                    if progress is not None:
+                        progress(SimpleNamespace(name="history.bundle", size=8), 3)
+
+                remote.fetch.side_effect = fetch
+                protocol = RemoteHelperProtocol(
+                    lambda: remote,
+                    io.StringIO(options + f"fetch {'1' * 40} refs/heads/main\n\n"),
+                    output, stderr=errors,
+                )
+
+                self.assertEqual(protocol.run(), 0)
+                self.assertEqual(output.getvalue(), "ok\n" * options.count("\n") + "\n")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "Drive download history.bundle: 37.5% (3.0 B / 8.0 B)\n" if visible else "",
+                )
+
+    def test_failed_clone_finishes_terminal_progress_without_completion_or_ack(self):
+        class TerminalStream(io.StringIO):
+            def isatty(self):
+                return True
+
+        remote = Mock()
+        output, errors = io.StringIO(), TerminalStream()
+
+        def fetch(requests, *, check_connectivity, progress):
+            progress(SimpleNamespace(name="history.bundle", size=8), 3)
+            raise DriveError("download interrupted")
+
+        remote.fetch.side_effect = fetch
+        protocol = RemoteHelperProtocol(
+            lambda: remote,
+            io.StringIO(f"option cloning true\nfetch {'1' * 40} refs/heads/main\n\n"),
+            output, stderr=errors,
+        )
+        with self.assertLogs("git_remote_gdrive.protocol", level="ERROR"):
+            self.assertEqual(protocol.run(), 1)
+        self.assertEqual(output.getvalue(), "ok\n")
+        self.assertEqual(
+            errors.getvalue(), "\rDrive download history.bundle: 37.5% (3.0 B / 8.0 B)\n",
+        )
 
     def test_push_status(self):
         remote = Mock()

@@ -10,6 +10,7 @@ from typing import Sequence, TextIO
 
 from .app import build_drive_client
 from .errors import ConfigurationError
+from .lfs_clone import CLONE_FILTER, clone_filter
 from .lfs_hooks import install_lfs_hooks
 from .lfs_protocol import LFSTransferProtocol
 from .lfs_push import pre_push_with_progress
@@ -114,7 +115,9 @@ def prepare_push(remote: str) -> None:
     install_lfs_hooks(_git)
 
 
-def prepare_fetch(remote: str, url: str, object_ids: Sequence[str]) -> None:
+def prepare_fetch(
+    remote: str, url: str, object_ids: Sequence[str], *, progress: bool = False
+) -> None:
     """Configure LFS downloads before checkout, including the first clone."""
     version = _git("lfs", "version", check=False)
     if version.returncode:
@@ -154,6 +157,9 @@ def prepare_fetch(remote: str, url: str, object_ids: Sequence[str]) -> None:
     }
     for key, value in settings.items():
         _git("config", "--local", "--replace-all", key, value)
+
+    if progress and _git("rev-parse", "--is-bare-repository").stdout.strip() == "false":
+        _git("config", "--local", "filter.lfs.process", CLONE_FILTER)
 
 
 def install(remote: str) -> None:
@@ -197,6 +203,7 @@ def main(
     hook = commands.add_parser("pre-push", help="Git hook installed automatically")
     hook.add_argument("remote")
     hook.add_argument("url")
+    commands.add_parser("clone-filter", help="internal LFS filter for clone progress")
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "push":
         try:
@@ -205,6 +212,12 @@ def main(
             print(f"git-lfs-gdrive: {exc}", file=sys.stderr)
             return 1
     args = parser.parse_args(arguments)
+    if args.command == "clone-filter":
+        try:
+            return clone_filter()
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            print(f"git-lfs-gdrive: {exc}", file=sys.stderr)
+            return 1
     if args.command == "pre-push":
         try:
             return pre_push_with_progress([args.remote, args.url], stdout=stdout)

@@ -15,10 +15,11 @@ def _format_bytes(size: int) -> str:
 
 
 class ByteProgressReporter:
-    """Render Git LFS progress records as the current file's byte percentage."""
+    """Render byte counts or Git LFS progress records for the current file."""
 
-    def __init__(self, stream: TextIO) -> None:
+    def __init__(self, stream: TextIO, *, label: str = "LFS") -> None:
         self.stream = stream
+        self.label = label
         self._tty = stream.isatty()
         self._line_width = 0
         self._last_key: tuple[str, str, int] | None = None
@@ -38,7 +39,12 @@ class ByteProgressReporter:
             transferred, size = map(int, byte_counts.split("/"))
         except ValueError:
             return
-        if transferred > size:
+        self.report(direction, name, transferred, size)
+
+    def report(self, direction: str, name: str, transferred: int, size: int) -> None:
+        if direction not in ("upload", "download", "checkout"):
+            return
+        if not 0 <= transferred <= size:
             return
 
         percent = transferred * 100 // size if size else 100
@@ -58,7 +64,7 @@ class ByteProgressReporter:
         name = "".join(character if character.isprintable() else "?" for character in name)
         tenths = transferred * 1000 // size if size else 1000
         message = (
-            f"LFS {direction} {name}: {tenths // 10}.{tenths % 10}% "
+            f"{self.label} {direction} {name}: {tenths // 10}.{tenths % 10}% "
             f"({_format_bytes(transferred)} / {_format_bytes(size)})"
         )
         if self._tty:

@@ -167,6 +167,21 @@ Com Git LFS instalado, os arquivos são restaurados durante o próprio clone,
 sem executar `git-lfs-gdrive install`. A configuração é local ao repositório;
 hooks existentes e o destino de upload são preservados.
 
+No terminal, o clone mostra o progresso pelos bytes de cada bundle do histórico
+Git e de cada arquivo LFS, por exemplo:
+
+```text
+LFS download arquivo.bin: 37.5% (384.0 MiB / 1.0 GiB)
+```
+
+As atualizações acontecem em blocos de até 8 MiB. Use `git clone --progress`
+para exibir o progresso também com a saída redirecionada, ou `--no-progress`
+ou `--quiet` para ocultá-lo (`--progress` explícito tem precedência sobre
+`--quiet`). Aguarde o término do clone após a transferência para concluir o
+checkout. Bundles já disponíveis no cache não geram uma barra de download.
+Com `--no-checkout`, a opção de progresso do clone também vale para o primeiro
+checkout LFS, quando ele for executado; depois, o filtro padrão é restaurado.
+
 Para adiar o download dos arquivos grandes, ainda é possível usar:
 
 ```bash

@@ -1,4 +1,6 @@
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +32,59 @@ def run(
 
 
 class TestGitEndToEnd(unittest.TestCase):
+    def test_clone_reports_bundle_bytes_and_honors_progress_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            drive = base / "drive"
+            (drive / "repo").mkdir(parents=True)
+            environment = {
+                key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+            }
+            environment.update({
+                "PATH": os.pathsep.join((str(Path(sys.executable).parent), environment["PATH"])),
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GDRIVE_LOCAL_ROOT": str(drive),
+                "GDRIVE_CACHE_DIR": str(base / "cache"),
+            })
+            source = base / "source"
+            source.mkdir()
+            run(source, environment, "init", "--quiet", "--initial-branch", "main")
+            run(source, environment, "config", "user.name", "Test User")
+            run(source, environment, "config", "user.email", "test@example.com")
+            content = os.urandom(9 * 1024 * 1024)
+            checksum = hashlib.sha256(content).hexdigest()
+            (source / "large.bin").write_bytes(content)
+            run(source, environment, "add", "large.bin")
+            run(source, environment, "commit", "--quiet", "-m", "large ordinary file")
+            run(source, environment, "push", "gd://repo", "main")
+
+            for index, (options, visible) in enumerate((
+                (("--progress",), True),
+                (("--quiet",), False),
+                (("--no-progress",), False),
+                (("--quiet", "--progress"), True),
+            )):
+                with self.subTest(options=options):
+                    environment["GDRIVE_CACHE_DIR"] = str(base / f"cache-{index}")
+                    clone = base / f"clone-{index}"
+                    result = run(base, environment, "clone", *options, "gd://repo", str(clone))
+                    self.assertEqual(hashlib.sha256((clone / "large.bin").read_bytes()).hexdigest(), checksum)
+                    self.assertEqual(run(clone, environment, "status", "--porcelain").stdout, "")
+                    run(clone, environment, "fsck", "--full")
+                    self.assertNotIn("Drive download", result.stdout)
+                    if visible:
+                        percentages = [float(value) for value in re.findall(
+                            r"Drive download .*?: ([0-9.]+)%", result.stderr,
+                        )]
+                        self.assertTrue(any(0 < value < 100 for value in percentages), result.stderr)
+                        self.assertEqual(percentages[-1], 100.0)
+                    else:
+                        self.assertNotIn("Drive download", result.stderr)
+
+            cached = run(base, environment, "clone", "--progress", "gd://repo", str(base / "cached-clone"))
+            self.assertNotIn("Drive download", cached.stderr)
+
     @unittest.skipUnless(os.name == "posix", "fake Git executable requires POSIX")
     def test_plain_push_without_git_lfs_preserves_custom_hook_in_worktree_and_bare_repo(self):
         with tempfile.TemporaryDirectory() as temporary:

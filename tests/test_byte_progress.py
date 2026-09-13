@@ -11,6 +11,15 @@ class TerminalStream(io.StringIO):
 
 
 class TestByteProgressReporter(unittest.TestCase):
+    def test_reports_byte_counts_with_custom_label(self):
+        stream = io.StringIO()
+        reporter = ByteProgressReporter(stream, label="Drive")
+        reporter.report("download", "history.bundle", 3, 8)
+        self.assertEqual(
+            stream.getvalue(),
+            "Drive download history.bundle: 37.5% (3.0 B / 8.0 B)\n",
+        )
+
     def test_reports_file_bytes_with_spaces_without_object_percentage(self):
         stream = io.StringIO()
         reporter = ByteProgressReporter(stream)

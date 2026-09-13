@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import DriveConflictError, DriveError, ManifestError
-from .google_drive_client import DriveItem, GoogleDriveClient
+from .google_drive_client import DriveItem, GoogleDriveClient, ProgressCallback
 from .manifest import BundleRecord, Manifest
 
 
@@ -117,7 +117,9 @@ class DriveRemoteStore:
     def delete_bundle(self, file_id: str) -> None:
         self.client.delete_file(file_id)
 
-    def cached_bundle(self, bundle: BundleRecord) -> Path:
+    def cached_bundle(
+        self, bundle: BundleRecord, *, progress: ProgressCallback | None = None
+    ) -> Path:
         remote_key = hashlib.sha256(self.root_folder_id.encode("utf-8")).hexdigest()[:16]
         directory = self.cache_dir / remote_key
         directory.mkdir(parents=True, exist_ok=True)
@@ -134,7 +136,17 @@ class DriveRemoteStore:
         os.close(descriptor)
         temporary = Path(temporary_name)
         try:
-            self.client.download_to_path(bundle.file_id, temporary)
+            def downloading(transferred: int) -> None:
+                # Report completion only after the downloaded bundle is verified.
+                if progress is not None and transferred < bundle.size:
+                    progress(transferred)
+
+            if progress is not None and bundle.size:
+                progress(0)
+            self.client.download_to_path(
+                bundle.file_id, temporary,
+                progress=downloading if progress is not None else None,
+            )
             actual_size = temporary.stat().st_size
             actual_checksum = sha256_file(temporary)
             if actual_size != bundle.size or actual_checksum != bundle.sha256:
@@ -142,6 +154,8 @@ class DriveRemoteStore:
                     f"bundle '{bundle.name}' failed integrity verification"
                 )
             os.replace(temporary, destination)
+            if progress is not None:
+                progress(bundle.size)
         finally:
             temporary.unlink(missing_ok=True)
         return destination

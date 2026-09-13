@@ -76,7 +76,8 @@ def main(
         stdout or sys.stdout,
         prepare_push=lambda: prepare_push(args.remote_name),
         prepare_fetch=lambda object_ids: prepare_fetch(
-            args.remote_name, args.remote_url, object_ids
+            args.remote_name, args.remote_url, object_ids,
+            progress=bool(protocol.options["progress"]),
         ),
     )
     return protocol.run()

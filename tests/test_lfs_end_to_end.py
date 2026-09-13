@@ -141,6 +141,96 @@ class TestGitLFSEndToEnd(unittest.TestCase):
                 if hook.exists():
                     self.assertNotIn(b"git-lfs-gdrive", hook.read_bytes())
 
+    def test_clone_reports_download_bytes_and_respects_progress_options(self):
+        binary = bytes(range(256)) * (64 * 1024) + b"last byte"
+        oid = self.commit_binary(binary, "binary with clone byte progress")
+        self.git(self.source, "push", "drive", "main")
+
+        cases = (
+            (("--progress",), True),
+            (("--quiet", "--progress"), True),
+            (("--quiet",), False),
+            (("--no-progress",), False),
+            ((), False),
+        )
+        for index, (options, visible) in enumerate(cases):
+            with self.subTest(options=options):
+                clone = self.base / f"progress-clone-{index}"
+                environment = {
+                    **self.environment,
+                    "GDRIVE_CACHE_DIR": str(self.base / f"progress-cache-{index}"),
+                    "GIT_SSH_COMMAND": "false",
+                }
+
+                result = self.git(
+                    self.base, "clone", *options, "gd://repo", str(clone),
+                    environment=environment,
+                )
+
+                self.assertEqual(result.stdout, "")
+                percentages = [
+                    float(value)
+                    for value in re.findall(
+                        r"LFS download asset\.bin: (\d+(?:\.\d+)?)% \(",
+                        result.stderr,
+                    )
+                ]
+                if visible:
+                    self.assertTrue(
+                        any(0 < value < 100 for value in percentages), result.stderr,
+                    )
+                    self.assertEqual(percentages[-1], 100)
+                    self.assertEqual(percentages, sorted(percentages))
+                    self.assertIn("MiB / 16.0 MiB)", result.stderr)
+                else:
+                    self.assertNotIn("LFS download ", result.stderr)
+                actual = (clone / "asset.bin").read_bytes()
+                self.assertEqual(len(actual), len(binary))
+                self.assertEqual(hashlib.sha256(actual).hexdigest(), oid)
+                self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+                self.git(clone, "lfs", "fsck", environment=environment)
+                self.assertEqual(
+                    self.git(clone, "config", "--local", "filter.lfs.process").stdout.strip(),
+                    "git-lfs filter-process",
+                )
+
+    def test_deferred_clone_restores_filter_after_first_checkout(self):
+        binary = bytes(range(256)) * (64 * 1024) + b"deferred checkout"
+        self.commit_binary(binary, "binary for deferred progress")
+        self.git(self.source, "push", "drive", "main")
+        clone = self.base / "deferred-progress-clone"
+        environment = {
+            **self.environment,
+            "GDRIVE_CACHE_DIR": str(self.base / "deferred-progress-cache"),
+            "GIT_SSH_COMMAND": "false",
+        }
+
+        result = self.git(
+            self.base, "clone", "--progress", "--no-checkout", "gd://repo", str(clone),
+            environment=environment,
+        )
+
+        self.assertNotIn("LFS download ", result.stderr)
+        self.assertFalse((clone / "asset.bin").exists())
+        checkout = self.git(
+            clone, "reset", "--hard", "HEAD", environment=environment,
+        )
+        self.assertIn("LFS download asset.bin:", checkout.stderr)
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+        self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+        self.git(clone, "lfs", "fsck", environment=environment)
+        self.assertEqual(
+            self.git(clone, "config", "--local", "filter.lfs.process").stdout.strip(),
+            "git-lfs filter-process",
+        )
+        (clone / "asset.bin").unlink()
+        later_checkout = self.git(
+            clone, "checkout", "--quiet", "HEAD", "--", "asset.bin",
+            environment=environment,
+        )
+        self.assertNotIn("LFS download ", later_checkout.stdout + later_checkout.stderr)
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+
     def test_clone_tag_ignores_lfsconfig_on_another_fetched_branch(self):
         binary = b"LFS from the selected tag\x00" * 1024
         self.commit_binary(binary, "binary without an endpoint override")
@@ -210,11 +300,16 @@ class TestGitLFSEndToEnd(unittest.TestCase):
 
         result = self.git(
             self.base, "-c", "lfs.transfer.maxretries=1", "-c", "lfs.transfer.maxretrydelay=0",
-            "clone", "gd://repo", str(clone), expect_success=False,
+            "clone", "--progress", "gd://repo", str(clone), expect_success=False,
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Clone succeeded, but checkout failed", result.stderr)
+        self.assertNotIn("LFS download asset.bin: 100", result.stderr)
+        self.assertEqual(
+            self.git(clone, "config", "--local", "filter.lfs.process").stdout.strip(),
+            "git-lfs filter-process",
+        )
         saved_object.rename(remote_object)
         self.git(clone, "restore", "--source=HEAD", "--staged", "--worktree", ":/")
         self.assertEqual((clone / "asset.bin").read_bytes(), binary)

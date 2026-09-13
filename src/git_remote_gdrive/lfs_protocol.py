@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 from .errors import ProtocolError
+from .lfs_clone import record_download_progress
 
 if TYPE_CHECKING:
     from .lfs_store import LFSObjectStore
@@ -78,6 +79,8 @@ class LFSTransferProtocol:
                     "bytesSoFar": transferred,
                     "bytesSinceLast": transferred - bytes_so_far,
                 })
+                if self.operation == "download":
+                    record_download_progress(oid, transferred, size)
                 bytes_so_far = transferred
 
             # OAuth and backend diagnostics must not enter the JSON stream.
