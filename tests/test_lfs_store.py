@@ -175,7 +175,7 @@ class TestLFSObjectStore(unittest.TestCase):
         oid, source = self.source(content)
         self.store.upload(oid, len(content), source)
 
-        def fail_download(file_id, destination):
+        def fail_download(file_id, destination, *, progress=None):
             destination.write_bytes(b"partial")
             raise DriveError("download interrupted")
 

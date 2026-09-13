@@ -165,6 +165,95 @@ class TestGoogleDriveClient(unittest.TestCase):
                         self.assertEqual(urlsplit(uri).path, "/drive/v3/files/bundle-id")
                         self.assertEqual(parse_qs(urlsplit(uri).query)["alt"], ["media"])
 
+    def test_upload_reports_acknowledged_chunks_before_completion(self):
+        chunk_size = 8 * 1024 * 1024
+        size = chunk_size + 1
+        session_url = "https://www.googleapis.com/upload/drive/v3/files?upload_id=session"
+        client, http = client_with_responses(
+            [
+                ({"status": "200", "location": session_url}, ""),
+                ({"status": "308", "range": f"bytes=0-{chunk_size - 1}"}, ""),
+                ({"status": "200"}, json.dumps({**FILE, "size": str(size)})),
+            ]
+        )
+        progress = []
+        request = http.request
+
+        def consume_stream(uri, method="GET", body=None, **kwargs):
+            if hasattr(body, "read"):
+                body = body.read()
+            return request(uri, method=method, body=body, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "large-object"
+            with source.open("wb") as handle:
+                handle.truncate(size)
+            with patch.object(http, "request", side_effect=consume_stream):
+                item = client.upload_path(
+                    "objects-id", source.name, source,
+                    progress=lambda count: progress.append((count, len(http.request_sequence))),
+                )
+
+        self.assertEqual(item.size, size)
+        self.assertEqual(progress, [(chunk_size, 2), (size, 3)])
+        self.assertEqual(http.request_sequence[1][3]["Content-Range"], f"bytes 0-{chunk_size - 1}/{size}")
+        self.assertEqual(http.request_sequence[2][3]["Content-Range"], f"bytes {chunk_size}-{chunk_size}/{size}")
+        self.assertEqual(len(http.request_sequence[1][2]), chunk_size)
+        self.assertEqual(http.request_sequence[2][2], b"\x00")
+
+    def test_failed_upload_does_not_report_completion_or_retry(self):
+        chunk_size = 8 * 1024 * 1024
+        client, http = client_with_responses(
+            [
+                ({"status": "200", "location": "https://upload.example/session"}, ""),
+                ({"status": "308", "range": f"bytes=0-{chunk_size - 1}"}, ""),
+                ({"status": "503"}, '{"error": {"message": "unavailable"}}'),
+            ]
+        )
+        progress = []
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "large-object"
+            with source.open("wb") as handle:
+                handle.truncate(chunk_size + 1)
+            with self.assertRaises(DriveError):
+                client.upload_path("objects-id", source.name, source, progress=progress.append)
+
+        self.assertEqual(progress, [chunk_size])
+        self.assertEqual(len(http.request_sequence), 3)
+
+    def test_download_reports_chunks_before_completion(self):
+        client, http = client_with_responses(
+            [
+                ({"status": "206", "content-range": "bytes 0-3/8"}, b"git\x00"),
+                ({"status": "206", "content-range": "bytes 4-7/8"}, b"data"),
+            ]
+        )
+        progress = []
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "object"
+            client.download_to_path(
+                "object-id", destination,
+                progress=lambda count: progress.append((count, len(http.request_sequence))),
+            )
+            self.assertEqual(destination.read_bytes(), b"git\x00data")
+        self.assertEqual(progress, [(4, 1), (8, 2)])
+        self.assertEqual(http.request_sequence[0][3]["range"], f"bytes=0-{8 * 1024 * 1024 - 1}")
+
+    def test_failed_download_does_not_report_completion(self):
+        client, http = client_with_responses(
+            [
+                ({"status": "206", "content-range": "bytes 0-3/8"}, b"git\x00"),
+                ({"status": "503"}, '{"error": {"message": "unavailable"}}'),
+            ]
+        )
+        progress = []
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "object"
+            with self.assertRaises(DriveError):
+                client.download_to_path("object-id", destination, progress=progress.append)
+        self.assertEqual(progress, [4])
+        self.assertEqual(len(http.request_sequence), 2)
+
     def test_write_http_errors_are_translated_without_retries(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "snapshot.bundle"

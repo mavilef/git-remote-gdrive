@@ -13,7 +13,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
+from googleapiclient.http import (
+    DEFAULT_CHUNK_SIZE,
+    MediaFileUpload,
+    MediaIoBaseDownload,
+    MediaIoBaseUpload,
+)
 
 from .errors import ConfigurationError, DriveConflictError, DriveError
 from .google_drive_client import (
@@ -21,11 +26,13 @@ from .google_drive_client import (
     FOLDER_MIME_TYPE,
     DriveItem,
     GoogleDriveClient,
+    ProgressCallback,
 )
 
 
 logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+TRANSFER_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 def default_token_path() -> Path:
@@ -193,22 +200,39 @@ class GoogleDriveClientImpl(GoogleDriveClient):
         self._download(file_id, target)
         return target.getvalue()
 
-    def download_to_path(self, file_id: str, destination: Path) -> None:
+    def download_to_path(
+        self,
+        file_id: str,
+        destination: Path,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
         try:
             with destination.open("wb") as target:
-                self._download(file_id, target)
+                self._download(file_id, target, progress=progress)
         except OSError as exc:
             raise DriveError(f"could not write downloaded bundle to {destination}: {exc}") from exc
 
-    def _download(self, file_id: str, target: Any) -> None:
+    def _download(
+        self,
+        file_id: str,
+        target: Any,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
         try:
             request = self.service.files().get_media(
                 fileId=file_id, supportsAllDrives=True
             )
-            downloader = MediaIoBaseDownload(target, request)
+            downloader = MediaIoBaseDownload(
+                target, request,
+                chunksize=TRANSFER_CHUNK_SIZE if progress is not None else DEFAULT_CHUNK_SIZE,
+            )
             done = False
             while not done:
-                _, done = downloader.next_chunk()
+                status, done = downloader.next_chunk()
+                if progress is not None and status is not None:
+                    progress(status.resumable_progress)
         except HttpError as exc:
             raise DriveError(f"could not download Drive file {file_id}: {exc}") from exc
 
@@ -249,19 +273,28 @@ class GoogleDriveClientImpl(GoogleDriveClient):
         source: Path,
         *,
         mime_type: str = BINARY_MIME_TYPE,
+        progress: ProgressCallback | None = None,
     ) -> DriveItem:
-        media = MediaFileUpload(str(source), mimetype=mime_type, resumable=True)
+        media = MediaFileUpload(
+            str(source),
+            mimetype=mime_type,
+            resumable=True,
+            chunksize=TRANSFER_CHUNK_SIZE if progress is not None else DEFAULT_CHUNK_SIZE,
+        )
         try:
-            value = (
-                self.service.files()
-                .create(
-                    body={"name": name, "parents": [parent_id]},
-                    media_body=media,
-                    fields=self._fields(),
-                    supportsAllDrives=True,
-                )
-                .execute()
+            request = self.service.files().create(
+                body={"name": name, "parents": [parent_id]},
+                media_body=media,
+                fields=self._fields(),
+                supportsAllDrives=True,
             )
+            value = None
+            while value is None:
+                status, value = request.next_chunk()
+                if progress is not None and status is not None:
+                    progress(status.resumable_progress)
+            if progress is not None:
+                progress(media.size())
         except HttpError as exc:
             raise DriveError(f"could not upload bundle '{name}': {exc}") from exc
         return self._item(value)

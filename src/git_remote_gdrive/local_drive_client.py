@@ -11,6 +11,7 @@ from .google_drive_client import (
     FOLDER_MIME_TYPE,
     DriveItem,
     GoogleDriveClient,
+    ProgressCallback,
 )
 
 
@@ -72,20 +73,45 @@ class LocalDriveClient(GoogleDriveClient):
         except OSError as exc:
             raise DriveError(f"could not read local Drive file {file_id}: {exc}") from exc
 
-    def download_to_path(self, file_id: str, destination: Path) -> None:
+    def download_to_path(
+        self,
+        file_id: str,
+        destination: Path,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
         try:
-            shutil.copyfile(self._path(file_id), destination)
+            self._copy(self._path(file_id), destination, progress)
         except OSError as exc:
             raise DriveError(f"could not download local Drive file {file_id}: {exc}") from exc
 
-    def _atomic_copy(self, source: Path, destination: Path) -> None:
+    @staticmethod
+    def _copy(
+        source: Path, destination: Path, progress: ProgressCallback | None
+    ) -> None:
+        if progress is None:
+            shutil.copyfile(source, destination)
+            return
+        transferred = 0
+        with source.open("rb") as reader, destination.open("wb") as writer:
+            while chunk := reader.read(8 * 1024 * 1024):
+                writer.write(chunk)
+                transferred += len(chunk)
+                progress(transferred)
+
+    def _atomic_copy(
+        self,
+        source: Path,
+        destination: Path,
+        progress: ProgressCallback | None = None,
+    ) -> None:
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{destination.name}.", dir=destination.parent
         )
         os.close(descriptor)
         temporary = Path(temporary_name)
         try:
-            shutil.copyfile(source, temporary)
+            self._copy(source, temporary, progress)
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
@@ -126,13 +152,14 @@ class LocalDriveClient(GoogleDriveClient):
         source: Path,
         *,
         mime_type: str = BINARY_MIME_TYPE,
+        progress: ProgressCallback | None = None,
     ) -> DriveItem:
         del mime_type
         self._validate_name(name)
         destination = self._path(parent_id) / name
         if destination.exists():
             raise DriveConflictError(f"local Drive child already exists: {destination}")
-        self._atomic_copy(source, destination)
+        self._atomic_copy(source, destination, progress)
         return self._item(destination)
 
     def delete_file(self, file_id: str) -> None:

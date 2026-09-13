@@ -66,17 +66,36 @@ class LFSTransferProtocol:
                 path = message.get("path")
                 if not isinstance(path, str) or not path:
                     raise ProtocolError("LFS upload requires a source path")
+            bytes_so_far = 0
+
+            def report_progress(transferred: int) -> None:
+                nonlocal bytes_so_far
+                transferred = min(transferred, size)
+                if transferred <= bytes_so_far:
+                    return
+                self._write({
+                    "event": "progress", "oid": oid,
+                    "bytesSoFar": transferred,
+                    "bytesSinceLast": transferred - bytes_so_far,
+                })
+                bytes_so_far = transferred
+
             # OAuth and backend diagnostics must not enter the JSON stream.
             with redirect_stdout(sys.stderr):
                 if self._store is None:
                     self._store = self.store_factory(self.remote, self.operation)
                 if self.operation == "upload":
-                    self._store.upload(oid, size, Path(path))
+                    self._store.upload(oid, size, Path(path), progress=report_progress)
                 else:
-                    response["path"] = str(self._store.download(oid, size).resolve())
-            self._write(
-                {"event": "progress", "oid": oid, "bytesSoFar": size, "bytesSinceLast": size}
-            )
+                    response["path"] = str(
+                        self._store.download(oid, size, progress=report_progress).resolve()
+                    )
+            if size == 0:
+                self._write(
+                    {"event": "progress", "oid": oid, "bytesSoFar": 0, "bytesSinceLast": 0}
+                )
+            else:
+                report_progress(size)
         except Exception as exc:
             response["error"] = {"code": 2, "message": str(exc)}
             logger.error("LFS transfer failed for %s: %s", oid, exc)

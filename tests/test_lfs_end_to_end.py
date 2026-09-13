@@ -130,6 +130,44 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
         self.git(clone, "lfs", "fsck")
 
+    def test_large_object_reports_progress_during_upload_and_download(self):
+        binary = bytes(range(256)) * (64 * 1024) + b"last byte"
+        self.commit_binary(binary, "binary spanning multiple transfer chunks")
+
+        def assert_progress(path, direction):
+            samples = [
+                tuple(map(int, line.split()[2].split("/")))
+                for line in path.read_text().splitlines()
+                if line.startswith(direction + " ")
+            ]
+            self.assertTrue(samples, f"no {direction} progress reported")
+            self.assertTrue(any(0 < done < total for done, total in samples))
+            self.assertEqual(samples[-1], (len(binary), len(binary)))
+            self.assertEqual(samples, sorted(samples))
+
+        upload_log = self.base / "upload-progress.log"
+        self.git(
+            self.source, "push", "drive", "main",
+            environment={**self.environment, "GIT_LFS_PROGRESS": str(upload_log)},
+        )
+        assert_progress(upload_log, "upload")
+
+        retry_log = self.base / "retry-progress.log"
+        self.git(
+            self.source, "lfs", "push", "--all", "drive",
+            environment={**self.environment, "GIT_LFS_PROGRESS": str(retry_log)},
+        )
+        assert_progress(retry_log, "upload")
+
+        clone = self.clone_drive()
+        download_log = self.base / "download-progress.log"
+        self.git(
+            clone, "lfs", "pull", "origin",
+            environment={**self.environment, "GIT_LFS_PROGRESS": str(download_log)},
+        )
+        assert_progress(download_log, "download")
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+
     def test_push_all_migrates_objects_from_previous_commits(self):
         first = b"historical\x00" * 1024
         self.commit_binary(first, "old binary")

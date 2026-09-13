@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from .errors import DriveConflictError, DriveError
-from .google_drive_client import DriveItem, GoogleDriveClient
+from .google_drive_client import DriveItem, GoogleDriveClient, ProgressCallback
 from .store import INTERNAL_FOLDER_NAME, default_cache_dir, sha256_file
 
 
@@ -65,7 +65,14 @@ class LFSObjectStore:
     def _cache_path(self, oid: str) -> Path:
         return self.cache_dir / "lfs" / "objects" / oid[:2] / oid
 
-    def _download_object(self, item: DriveItem, oid: str, size: int) -> Path:
+    def _download_object(
+        self,
+        item: DriveItem,
+        oid: str,
+        size: int,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> Path:
         if item.is_folder:
             raise DriveConflictError(f"remote LFS object '{oid}' is a folder")
         destination = self._cache_path(oid)
@@ -76,7 +83,7 @@ class LFSObjectStore:
         os.close(descriptor)
         temporary = Path(temporary_name)
         try:
-            self.client.download_to_path(item.id, temporary)
+            self.client.download_to_path(item.id, temporary, progress=progress)
             if not self._matches(temporary, oid, size):
                 raise DriveError(f"LFS object '{oid}' failed integrity verification")
             os.replace(temporary, destination)
@@ -84,7 +91,14 @@ class LFSObjectStore:
             temporary.unlink(missing_ok=True)
         return destination
 
-    def upload(self, oid: str, size: int, source: Path) -> None:
+    def upload(
+        self,
+        oid: str,
+        size: int,
+        source: Path,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
         self._validate(oid, size)
         source = Path(source)
         if not self._matches(source, oid, size):
@@ -95,13 +109,15 @@ class LFSObjectStore:
         existing = self.client.find_child(folder.id, oid)
         if existing is not None:
             # Verify remote bytes even when a valid local cached copy exists.
-            self._download_object(existing, oid, size)
+            self._download_object(existing, oid, size, progress=progress)
             return
         # A lost upload response can still mean success. Leave the object in place
         # so a retry can verify and reuse it.
-        self.client.upload_path(folder.id, oid, source)
+        self.client.upload_path(folder.id, oid, source, progress=progress)
 
-    def download(self, oid: str, size: int) -> Path:
+    def download(
+        self, oid: str, size: int, *, progress: ProgressCallback | None = None
+    ) -> Path:
         self._validate(oid, size)
         destination = self._cache_path(oid)
         if not self._matches(destination, oid, size):
@@ -109,7 +125,7 @@ class LFSObjectStore:
             item = self.client.find_child(folder.id, oid) if folder is not None else None
             if item is None:
                 raise DriveError(f"LFS object '{oid}' was not found in the remote")
-            destination = self._download_object(item, oid, size)
+            destination = self._download_object(item, oid, size, progress=progress)
 
         # Git LFS moves the returned file into its own object storage. Give each
         # request a disposable copy so the shared cache remains available.

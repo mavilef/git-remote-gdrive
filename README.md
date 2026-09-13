@@ -130,6 +130,13 @@ configura a transferência apenas para o remote escolhido. Os arquivos são
 enviados ao Drive antes das referências Git, usando as mesmas credenciais e
 variáveis do helper. Outros remotes mantêm sua configuração LFS.
 
+O Git LFS atualiza os bytes transferidos e a velocidade durante cada arquivo,
+a cada bloco de até 8 MiB. Seu percentual nativo conta objetos concluídos, então
+pode continuar em `0% (0/1)` enquanto o volume transferido aumenta. Nos reenvios,
+a verificação do objeto já existente no Drive também informa progresso. A
+verificação inicial do arquivo local e a autenticação acontecem antes da
+transferência e podem manter os contadores em zero por algum tempo.
+
 Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
 arquivos. A configuração do agente é local e não é copiada pelo clone:
 

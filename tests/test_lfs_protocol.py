@@ -3,7 +3,7 @@ import json
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, call, patch
 
 from git_remote_gdrive.lfs_protocol import LFSTransferProtocol
 
@@ -13,9 +13,9 @@ OTHER_OID = "b" * 64
 
 
 class TestLFSTransferProtocol(unittest.TestCase):
-    def run_protocol(self, messages, factory=None):
+    def run_protocol(self, messages, factory=None, output=None):
         factory = factory if factory is not None else Mock()
-        output = io.StringIO()
+        output = output if output is not None else io.StringIO()
         protocol = LFSTransferProtocol(
             factory,
             io.StringIO("".join(json.dumps(message) + "\n" for message in messages)),
@@ -50,7 +50,10 @@ class TestLFSTransferProtocol(unittest.TestCase):
         factory.assert_called_once_with("drive", "upload")
         self.assertEqual(
             factory.return_value.upload.call_args_list,
-            [unittest.mock.call(OID, 10, Path("/first")), unittest.mock.call(OTHER_OID, 0, Path("/empty"))],
+            [
+                call(OID, 10, Path("/first"), progress=ANY),
+                call(OTHER_OID, 0, Path("/empty"), progress=ANY),
+            ],
         )
         self.assertEqual(
             output,
@@ -77,11 +80,92 @@ class TestLFSTransferProtocol(unittest.TestCase):
 
         self.assertEqual(status, 0)
         factory.assert_called_once_with("gd://folder", "download")
-        factory.return_value.download.assert_called_once_with(OID, 10)
+        factory.return_value.download.assert_called_once_with(OID, 10, progress=ANY)
         self.assertEqual(
             output[-1],
             {"event": "complete", "oid": OID, "path": str(Path("downloaded-object").resolve())},
         )
+
+    def test_upload_progress_is_flushed_before_upload_returns_without_double_counting(self):
+        factory = Mock()
+        stream = io.StringIO()
+        expected_progress = [
+            {"event": "progress", "oid": OID, "bytesSoFar": 3, "bytesSinceLast": 3},
+            {"event": "progress", "oid": OID, "bytesSoFar": 7, "bytesSinceLast": 4},
+            {"event": "progress", "oid": OID, "bytesSoFar": 10, "bytesSinceLast": 3},
+        ]
+
+        def upload(oid, size, path, *, progress):
+            for transferred, event_count in [(0, 0), (3, 1), (3, 1), (2, 1), (7, 2), (10, 3), (11, 3)]:
+                progress(transferred)
+                self.assertEqual(
+                    [json.loads(line) for line in stream.getvalue().splitlines()],
+                    [{}, *expected_progress[:event_count]],
+                )
+                self.assertEqual(flush.call_count, 1 + event_count)
+
+        factory.return_value.upload.side_effect = upload
+        with patch.object(stream, "flush", wraps=stream.flush) as flush:
+            status, output, _ = self.run_protocol([
+                {"event": "init", "remote": "drive", "operation": "upload"},
+                {"event": "upload", "oid": OID, "size": 10, "path": "/source"},
+            ], factory, stream)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(output, [{}, *expected_progress, {"event": "complete", "oid": OID}])
+
+    def test_download_progress_completes_only_remaining_bytes(self):
+        factory = Mock()
+
+        def download(oid, size, *, progress):
+            progress(4)
+            progress(7)
+            return Path("downloaded-object")
+
+        factory.return_value.download.side_effect = download
+        status, output, _ = self.run_protocol([
+            {"event": "init", "remote": "drive", "operation": "download"},
+            {"event": "download", "oid": OID, "size": 10},
+        ], factory)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(output, [
+            {},
+            {"event": "progress", "oid": OID, "bytesSoFar": 4, "bytesSinceLast": 4},
+            {"event": "progress", "oid": OID, "bytesSoFar": 7, "bytesSinceLast": 3},
+            {"event": "progress", "oid": OID, "bytesSoFar": 10, "bytesSinceLast": 3},
+            {"event": "complete", "oid": OID, "path": str(Path("downloaded-object").resolve())},
+        ])
+
+    def test_partial_failure_does_not_finish_progress_and_retry_restarts_counter(self):
+        factory = Mock()
+
+        def upload(oid, size, path, *, progress):
+            if factory.return_value.upload.call_count == 1:
+                progress(4)
+                raise RuntimeError("connection lost")
+            progress(2)
+            progress(6)
+
+        factory.return_value.upload.side_effect = upload
+        request = {"event": "upload", "oid": OID, "size": 10, "path": "/source"}
+        with self.assertLogs("git_remote_gdrive.lfs_protocol", level="ERROR"):
+            status, output, _ = self.run_protocol([
+                {"event": "init", "remote": "drive", "operation": "upload"},
+                request,
+                request,
+            ], factory)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(output, [
+            {},
+            {"event": "progress", "oid": OID, "bytesSoFar": 4, "bytesSinceLast": 4},
+            {"event": "complete", "oid": OID, "error": {"code": 2, "message": "connection lost"}},
+            {"event": "progress", "oid": OID, "bytesSoFar": 2, "bytesSinceLast": 2},
+            {"event": "progress", "oid": OID, "bytesSoFar": 6, "bytesSinceLast": 4},
+            {"event": "progress", "oid": OID, "bytesSoFar": 10, "bytesSinceLast": 4},
+            {"event": "complete", "oid": OID},
+        ])
 
     def test_object_error_does_not_stop_later_transfers(self):
         factory = Mock()
@@ -120,7 +204,7 @@ class TestLFSTransferProtocol(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(output[1]["error"]["message"], "authorization failed")
         self.assertEqual(output[-1], {"event": "complete", "oid": OTHER_OID})
-        store.upload.assert_called_once_with(OTHER_OID, 1, Path("/second"))
+        store.upload.assert_called_once_with(OTHER_OID, 1, Path("/second"), progress=ANY)
 
     def test_invalid_transfer_fields_never_reach_store(self):
         invalid_fields = [
@@ -179,7 +263,7 @@ class TestLFSTransferProtocol(unittest.TestCase):
 
     def test_backend_stdout_is_redirected_to_stderr(self):
         store = Mock()
-        store.upload.side_effect = lambda *args: print("upload diagnostic")
+        store.upload.side_effect = lambda *args, **kwargs: print("upload diagnostic")
         store.close.side_effect = lambda: print("cleanup diagnostic")
 
         def factory(*args):

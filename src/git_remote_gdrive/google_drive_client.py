@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from .errors import DriveConflictError
 
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 BINARY_MIME_TYPE = "application/octet-stream"
+ProgressCallback = Callable[[int], None]
 
 
 @dataclass(frozen=True)
@@ -38,8 +40,14 @@ class GoogleDriveClient(ABC):
         """Download a small file into memory."""
 
     @abstractmethod
-    def download_to_path(self, file_id: str, destination: Path) -> None:
-        """Stream a file into destination."""
+    def download_to_path(
+        self,
+        file_id: str,
+        destination: Path,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> None:
+        """Stream a file into destination, reporting cumulative bytes received."""
 
     @abstractmethod
     def upload_bytes(
@@ -61,8 +69,9 @@ class GoogleDriveClient(ABC):
         source: Path,
         *,
         mime_type: str = BINARY_MIME_TYPE,
+        progress: ProgressCallback | None = None,
     ) -> DriveItem:
-        """Stream a local file into a newly created Drive file."""
+        """Stream a new Drive file, reporting cumulative bytes acknowledged."""
 
     @abstractmethod
     def delete_file(self, file_id: str) -> None:
