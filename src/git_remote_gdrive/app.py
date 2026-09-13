@@ -8,6 +8,7 @@ from typing import Sequence, TextIO
 
 from .errors import ConfigurationError
 from .git_repository import GitRepository
+from .google_drive_client import GoogleDriveClient
 from .google_drive_client_impl import GoogleDriveClientImpl
 from .local_drive_client import LocalDriveClient
 from .log_config import configure_logging
@@ -27,25 +28,26 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_remote(folder_id: str) -> GitDriveRemote:
+def build_drive_client() -> GoogleDriveClient:
     local_root = os.environ.get("GDRIVE_LOCAL_ROOT")
     if local_root:
-        client = LocalDriveClient(local_root)
-    else:
-        credentials_path = os.environ.get("GDRIVE_CREDENTIALS_PATH")
-        if not credentials_path:
-            raise ConfigurationError(
-                "GDRIVE_CREDENTIALS_PATH is not set; point it to your OAuth desktop "
-                "client credentials JSON file"
-            )
-        client = GoogleDriveClientImpl(
-            credentials_path,
-            token_path=os.environ.get("GDRIVE_TOKEN_PATH"),
+        return LocalDriveClient(local_root)
+    credentials_path = os.environ.get("GDRIVE_CREDENTIALS_PATH")
+    if not credentials_path:
+        raise ConfigurationError(
+            "GDRIVE_CREDENTIALS_PATH is not set; point it to your OAuth desktop "
+            "client credentials JSON file"
         )
+    return GoogleDriveClientImpl(
+        credentials_path,
+        token_path=os.environ.get("GDRIVE_TOKEN_PATH"),
+    )
 
+
+def _build_remote(folder_id: str) -> GitDriveRemote:
     cache_path = os.environ.get("GDRIVE_CACHE_DIR")
     store = DriveRemoteStore(
-        client,
+        build_drive_client(),
         folder_id,
         cache_dir=Path(cache_path).expanduser() if cache_path else None,
     )

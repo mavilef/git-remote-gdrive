@@ -18,6 +18,7 @@ git-remote-gdrive = "git_remote_gdrive.app:main"
 git-remote-gd = "git_remote_gdrive.app:main"
 git-remote-googledrive = "git_remote_gdrive.app:main"
 git-remote-google-drive = "git_remote_gdrive.app:main"
+git-lfs-gdrive = "git_remote_gdrive.lfs:main"
 
 [build-system]
 requires = ["setuptools>=77"]

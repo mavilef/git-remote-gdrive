@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Check Git LFS
+        run: git lfs version
       - name: Build and install wheel
         run: |
           python -m pip wheel --no-deps --wheel-dir dist .

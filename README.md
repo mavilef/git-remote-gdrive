@@ -18,6 +18,7 @@ O MVP suporta:
 - `git push --dry-run`;
 - cache local dos bundles baixados;
 - verificação SHA-256 de cada bundle;
+- arquivos Git LFS armazenados no Drive, com verificação SHA-256;
 - detecção otimista de pushes concorrentes.
 
 O uso suportado pelo MVP é de um push por vez para cada pasta remota.
@@ -109,6 +110,49 @@ git push drive --delete minha-branch
 git fetch drive
 ```
 
+### Git LFS
+
+Com Git LFS 3.7.1 ou mais recente instalado, configure cada clone que usará LFS
+no Drive:
+
+```bash
+git-lfs-gdrive install drive
+git lfs track "*.bin"
+git add .gitattributes arquivo.bin
+git commit -m "Adiciona arquivo com LFS"
+git push drive main
+```
+
+O comando instala os filtros e o hook de pre-push do Git LFS no repositório e
+configura a transferência apenas para o remote escolhido. Os arquivos são
+enviados ao Drive antes das referências Git, usando as mesmas credenciais e
+variáveis do helper. Outros remotes mantêm sua configuração LFS.
+
+Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
+arquivos:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone gd://1AbCdEfGhIjKlMn meu-repositorio
+cd meu-repositorio
+git-lfs-gdrive install origin
+git lfs pull origin
+```
+
+Ao migrar um repositório que já usa LFS em outro remote, copie também os objetos
+do histórico; publicar apenas as refs Git não garante essa cópia:
+
+```bash
+git lfs fetch --all origin
+git-lfs-gdrive install drive
+git lfs push --all drive
+```
+
+Depois publique as branches e tags com `git push`. Se houver `lfs.url` ou
+`lfs.pushurl` no Git ou em `.lfsconfig`, mova essa configuração para o remote
+correspondente (`remote.<nome>.lfsurl` / `remote.<nome>.lfspushurl`) antes de
+instalar. Um remote pode ter pastas distintas para fetch e push, mas apenas uma
+URL em cada direção. Ao trocar suas URLs, execute o instalador novamente.
+
 ## Como os dados ficam no Drive
 
 Dentro da pasta escolhida, o helper mantém apenas esta estrutura:
@@ -116,9 +160,12 @@ Dentro da pasta escolhida, o helper mantém apenas esta estrutura:
 ```text
 .git-remote-gdrive/
 ├── manifest.json
-└── bundles/
-    ├── bundle-00000001-....bundle
-    └── bundle-00000002-....bundle
+├── bundles/
+│   ├── bundle-00000001-....bundle
+│   └── bundle-00000002-....bundle
+└── lfs/objects/
+    └── <primeiros-2-caracteres-do-hash>/
+        └── <sha256-do-arquivo>
 ```
 
 Bundles antigos continuam necessários para reconstruir clones novos. O cache
@@ -126,6 +173,9 @@ local evita baixá-los novamente na mesma máquina. Ele pode crescer até o tama
 do histórico remoto e pode ser apagado com segurança quando for necessário
 liberar espaço; os bundles serão baixados de novo no próximo fetch que precisar
 deles.
+
+Os arquivos LFS também usam cache local e são verificados antes de cada envio
+ou uso. No Drive, um objeto existente é verificado e reutilizado nos reenvios.
 
 ## Limitações do MVP
 
@@ -139,8 +189,8 @@ deles.
   podem sobrescrever referências. Execute apenas um push por vez por pasta.
 - O conteúdo dos bundles não recebe criptografia adicional. Quem puder ler a
   pasta do Drive poderá baixar o histórico Git.
-- Git LFS exige um servidor LFS separado; este helper armazena apenas os ponteiros
-  LFS que fazem parte do repositório Git.
+- Locks de arquivos LFS não são suportados. Objetos LFS antigos não são removidos
+  automaticamente do Drive.
 
 ## Desenvolvimento e testes
 
@@ -152,6 +202,9 @@ uv sync
 Por padrão, os testes não acessam sua conta. Os testes end-to-end executam Git
 real e o helper instalado sobre um backend local descartável. Os testes da API
 simulam as respostas HTTP usando a biblioteca oficial do Google.
+Os testes LFS usam o executável real do Git LFS e cobrem push, clone, atualização,
+migração do histórico, falha de upload e isolamento entre remotes. São ignorados
+se Git LFS não estiver instalado; a CI exige sua presença.
 
 A CI gera e instala um wheel em um checkout limpo e executa a suíte em Python
 3.10 e 3.14. Para gerar um pacote de distribuição, use também um checkout limpo,
