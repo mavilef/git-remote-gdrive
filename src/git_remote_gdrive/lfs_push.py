@@ -13,13 +13,13 @@ from typing import BinaryIO, Sequence, TextIO
 from .byte_progress import ByteProgressReporter
 
 
-def push_with_progress(
+def pre_push_with_progress(
     arguments: Sequence[str],
     *,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
-    """Run ordinary git push, displaying Git LFS's per-file byte counters."""
+    """Run the LFS pre-push hook, displaying its per-file byte counters."""
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     reporter = ByteProgressReporter(stderr)
@@ -68,9 +68,10 @@ def push_with_progress(
                         reporter.update(line.decode("utf-8", "replace"))
 
             # Pipes disable the native intermediate object counter. Git output
-            # and errors still reach their original streams; stdin stays usable.
+            # and errors still reach their original streams. Inherit stdin so
+            # Git LFS receives exactly the ref updates supplied by git push.
             process = subprocess.Popen(
-                ["git", "-c", "lfs.forceprogress=false", "push", *arguments],
+                ["git", "-c", "lfs.forceprogress=false", "lfs", "pre-push", *arguments],
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

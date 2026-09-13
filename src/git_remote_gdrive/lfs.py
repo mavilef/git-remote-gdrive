@@ -10,8 +10,9 @@ from typing import Sequence, TextIO
 
 from .app import build_drive_client
 from .errors import ConfigurationError
+from .lfs_hooks import install_lfs_hooks
 from .lfs_protocol import LFSTransferProtocol
-from .lfs_push import push_with_progress
+from .lfs_push import pre_push_with_progress
 from .lfs_store import LFSObjectStore
 from .log_config import configure_logging
 from .utils import get_folder_id_from_google_drive_url
@@ -88,8 +89,7 @@ def install(remote: str) -> None:
     if match is None or tuple(map(int, match.groups())) < (3, 7, 1):
         raise ConfigurationError("Git LFS 3.7.1 or newer is required")
     _check_endpoint_overrides()
-    # Keep filters local and let Git LFS report conflicting custom hooks.
-    _git("lfs", "install", "--local")
+    install_lfs_hooks(_git)
     settings = {
         "lfs.customtransfer.gdrive.path": "git-lfs-gdrive",
         "lfs.customtransfer.gdrive.concurrent": "false",
@@ -120,16 +120,25 @@ def main(
     installer.add_argument("remote", help="name of an existing Google Drive remote")
     commands.add_parser(
         "push", add_help=False,
-        help="run git push with LFS percentages measured in bytes; forwards all arguments",
+        help="compatibility alias for git push; forwards all arguments",
     )
+    hook = commands.add_parser("pre-push", help="Git hook installed automatically")
+    hook.add_argument("remote")
+    hook.add_argument("url")
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "push":
         try:
-            return push_with_progress(arguments[1:], stdout=stdout)
+            return subprocess.call(["git", "push", *arguments[1:]], stdout=stdout)
         except (OSError, ValueError) as exc:
             print(f"git-lfs-gdrive: {exc}", file=sys.stderr)
             return 1
     args = parser.parse_args(arguments)
+    if args.command == "pre-push":
+        try:
+            return pre_push_with_progress([args.remote, args.url], stdout=stdout)
+        except (OSError, ValueError) as exc:
+            print(f"git-lfs-gdrive: {exc}", file=sys.stderr)
+            return 1
     if args.command == "install":
         try:
             install(args.remote)

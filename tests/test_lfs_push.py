@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 @unittest.skipUnless(os.name == "posix", "fake Git executable requires POSIX")
-class TestLFSPush(unittest.TestCase):
+class TestLFSPrePush(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -28,7 +28,8 @@ class TestLFSPush(unittest.TestCase):
             # Google dependency's Python 3.10 EOL notice in the test fixture.
             "PYTHONWARNINGS": "ignore::FutureWarning:google.api_core._python_version_support",
         })
-        self.command = [sys.executable, "-m", "git_remote_gdrive.lfs", "push"]
+        self.command = [sys.executable, "-m", "git_remote_gdrive.lfs", "pre-push"]
+        self.arguments = ["drive", "gd://repo"]
 
     def fake_git(self, body):
         executable = self.bin / "git"
@@ -42,10 +43,10 @@ class TestLFSPush(unittest.TestCase):
         )
         executable.chmod(0o755)
 
-    def run_push(self, *arguments):
+    def run_hook(self, input_bytes=b""):
         return subprocess.run(
-            [*self.command, *arguments], cwd=self.base, env=self.environment,
-            capture_output=True, timeout=15, check=False,
+            [*self.command, *self.arguments], cwd=self.base, env=self.environment,
+            input=input_bytes, capture_output=True, timeout=15, check=False,
         )
 
     def start_push(self):
@@ -53,7 +54,7 @@ class TestLFSPush(unittest.TestCase):
         stream = output.open("wb")
         self.addCleanup(stream.close)
         process = subprocess.Popen(
-            self.command, cwd=self.base, env=self.environment,
+            [*self.command, *self.arguments], cwd=self.base, env=self.environment,
             stdout=subprocess.PIPE, stderr=stream, start_new_session=True,
         )
 
@@ -75,14 +76,43 @@ class TestLFSPush(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "timed out waiting for push")
             time.sleep(0.02)
 
-    def test_forwards_arguments_output_errors_and_exit_status(self):
+    def test_forwards_ref_updates_arguments_output_errors_and_exit_status(self):
         self.fake_git(r"""
             (root / 'invocation.json').write_text(json.dumps({
                 'arguments': sys.argv[1:],
+                'stdin': sys.stdin.buffer.read().hex(),
                 'log': os.environ['GIT_LFS_PROGRESS'],
                 'force': os.environ['GIT_LFS_FORCE_PROGRESS'],
             }))
             sys.stdout.buffer.write(b'push result \xff\n')
+            sys.stderr.buffer.write(b'remote rejected: \xfe\n')
+            sys.exit(7)
+        """)
+        ref_updates = (
+            "refs/heads/main " + "a" * 40 + " refs/heads/main " + "0" * 40 + "\n"
+            "refs/heads/topic " + "b" * 40 + " refs/heads/topic " + "c" * 40 + "\n"
+        ).encode()
+
+        result = self.run_hook(ref_updates)
+
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stdout, b"push result \xff\n")
+        self.assertEqual(result.stderr, b"remote rejected: \xfe\n")
+        invocation = json.loads((self.base / "invocation.json").read_text())
+        actual = invocation["arguments"]
+        self.assertEqual(actual[actual.index("lfs"):], ["lfs", "pre-push", *self.arguments])
+        self.assertEqual(bytes.fromhex(invocation["stdin"]), ref_updates)
+        self.assertEqual(invocation["force"], "0")
+        self.assertTrue(Path(invocation["log"]).is_absolute())
+        self.assertFalse(Path(invocation["log"]).exists())
+
+    def test_push_alias_forwards_flags_without_starting_another_progress_monitor(self):
+        self.fake_git(r"""
+            (root / 'invocation.json').write_text(json.dumps({
+                'arguments': sys.argv[1:],
+                'log': os.environ.get('GIT_LFS_PROGRESS'),
+            }))
+            sys.stdout.buffer.write(b'push alias \xff\n')
             sys.stderr.buffer.write(b'remote rejected: \xfe\n')
             sys.exit(7)
         """)
@@ -91,17 +121,18 @@ class TestLFSPush(unittest.TestCase):
             "--push-option=hello world", "--help",
         ]
 
-        result = self.run_push(*arguments)
+        result = subprocess.run(
+            [*self.command[:-1], "push", *arguments],
+            cwd=self.base, env=self.environment,
+            capture_output=True, timeout=15, check=False,
+        )
 
         self.assertEqual(result.returncode, 7)
-        self.assertEqual(result.stdout, b"push result \xff\n")
+        self.assertEqual(result.stdout, b"push alias \xff\n")
         self.assertEqual(result.stderr, b"remote rejected: \xfe\n")
         invocation = json.loads((self.base / "invocation.json").read_text())
-        actual = invocation["arguments"]
-        self.assertEqual(actual[actual.index("push") + 1:], arguments)
-        self.assertEqual(invocation["force"], "0")
-        self.assertTrue(Path(invocation["log"]).is_absolute())
-        self.assertFalse(Path(invocation["log"]).exists())
+        self.assertEqual(invocation["arguments"], ["push", *arguments])
+        self.assertIsNone(invocation["log"])
 
     def test_streams_fragmented_progress_before_exit_and_drains_final_record(self):
         self.fake_git(r"""
@@ -146,7 +177,7 @@ class TestLFSPush(unittest.TestCase):
                 log.write(b'upload 1/1 50/100 new file.bin\n')
         """)
 
-        result = self.run_push()
+        result = self.run_hook()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(progress.read_bytes(), previous + current)

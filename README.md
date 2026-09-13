@@ -125,32 +125,34 @@ git commit -m "Adiciona arquivo com LFS"
 git push drive main
 ```
 
-O comando instala os filtros e o hook de pre-push do Git LFS no repositório e
-configura a transferência apenas para o remote escolhido. Os arquivos são
-enviados ao Drive antes das referências Git, usando as mesmas credenciais e
-variáveis do helper. Outros remotes mantêm sua configuração LFS.
+O comando instala os filtros do Git LFS e um hook de pre-push com progresso por
+bytes no repositório, configurando a transferência para o remote escolhido. Os
+arquivos são enviados ao Drive antes das referências Git, usando as mesmas
+credenciais e variáveis do helper. Outros remotes mantêm sua configuração LFS.
 
-Para acompanhar a porcentagem pelos **bytes de cada arquivo**, use:
+O próprio `git push` mostra a porcentagem pelos **bytes de cada arquivo**:
 
 ```bash
-git-lfs-gdrive push -u drive main
+git push -u drive main
 # Nos próximos envios, com upstream configurado:
-git-lfs-gdrive push
+git push
 ```
 
-Esse comando executa `git push` com os mesmos argumentos e mostra, por exemplo,
+Durante o envio ao Drive, aparece, por exemplo,
 `LFS upload arquivo.bin: 37.5% (384.0 MiB / 1.0 GiB)`. A porcentagem avança
 durante o arquivo e começa novamente para o próximo arquivo. Mensagens, erros
 e o resultado final do Git são preservados; o resumo nativo do LFS ainda pode
 aparecer ao terminar. `100%` indica os bytes transferidos: aguarde o resultado
 final do push para confirmar a publicação.
 
-O Git LFS atualiza os bytes transferidos e a velocidade durante cada arquivo,
-a cada bloco de até 8 MiB. Seu percentual nativo conta objetos concluídos, então
-pode continuar em `0% (0/1)` enquanto o volume transferido aumenta. Nos reenvios,
-a verificação do objeto já existente no Drive também informa progresso. A
-verificação inicial do arquivo local e a autenticação acontecem antes da
-transferência e podem manter os contadores em zero por algum tempo.
+O progresso atualiza a cada bloco de até 8 MiB. Nos reenvios, a verificação do
+objeto já existente no Drive também informa progresso. A verificação inicial
+do arquivo local e a autenticação acontecem antes da transferência e podem
+manter os contadores em zero por algum tempo.
+
+Se já havia configurado LFS, após atualizar o helper execute novamente
+`git-lfs-gdrive install drive` para atualizar o hook. Hooks personalizados são
+preservados; o instalador informa um conflito se precisar de integração manual.
 
 Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
 arquivos. A configuração do agente é local e não é copiada pelo clone:

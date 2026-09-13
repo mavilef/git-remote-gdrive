@@ -190,13 +190,11 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.assertEqual((clone / "asset.bin").read_bytes(), first)
         self.git(clone, "lfs", "fsck")
 
-    def test_push_wrapper_reports_byte_percentage_and_sets_upstream(self):
+    def test_git_push_reports_byte_percentage_and_sets_upstream(self):
         binary = bytes(range(256)) * (64 * 1024) + b"last byte"
         self.commit_binary(binary, "binary with visible byte progress")
 
-        process = self.command(
-            self.source, "git-lfs-gdrive", "push", "-u", "drive", "main"
-        )
+        process = self.git(self.source, "push", "-u", "drive", "main")
 
         percentages = [
             float(value)
@@ -263,7 +261,8 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.command(self.source, "git-lfs-gdrive", "install", "drive")
         binary = b"other remote\x00" * 1024
         self.commit_binary(binary, "binary for other remote")
-        self.git(self.source, "push", "other", "main")
+        process = self.git(self.source, "push", "other", "main")
+        self.assertNotIn("LFS upload ", process.stdout + process.stderr)
         self.assertFalse((self.drive / "repo" / ".git-remote-gdrive").exists())
 
         clone = self.base / "other-clone"
