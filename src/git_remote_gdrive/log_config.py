@@ -9,5 +9,5 @@ def configure_logging() -> None:
     level = getattr(logging, level_name, logging.WARNING)
     logging.basicConfig(
         level=level,
-        format="git-remote-gdrive: %(levelname)s: %(message)s",
+        format="[%(asctime)s][git-remote-gdrive][%(funcName)s][%(levelname)s] %(message)s",
     )
