@@ -87,7 +87,6 @@ class TestGitLFSEndToEnd(unittest.TestCase):
                 b"version https://git-lfs.github.com/spec/v1\n"
             )
         )
-        self.command(clone, "git-lfs-gdrive", "install", "origin")
         return clone
 
     def test_push_clone_pull_and_update_binary(self):
@@ -108,24 +107,115 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.assertEqual((clone / "asset.bin").read_bytes(), second)
         self.git(clone, "lfs", "fsck")
 
-    def test_restore_recovers_clone_with_unconfigured_global_lfs_filters(self):
-        binary = b"recover failed checkout\x00" * 1024
-        self.commit_binary(binary, "binary for checkout recovery")
+    def test_clone_checks_out_lfs_without_manual_setup(self):
+        binary = bytes(range(256)) * 1024 + b"complete checkout\x00"
+        oid = self.commit_binary(binary, "binary for automatic clone")
         self.git(self.source, "push", "drive", "main")
-        self.environment["GIT_CONFIG_GLOBAL"] = str(self.base / "global.gitconfig")
-        self.git(self.source, "lfs", "install", "--skip-repo")
+
+        for global_filters, remote in ((False, "origin"), (True, "cloud")):
+            with self.subTest(global_filters=global_filters, remote=remote):
+                clone = self.base / f"clone-{remote}"
+                environment = {
+                    **self.environment,
+                    "GDRIVE_CACHE_DIR": str(self.base / f"cache-{remote}"),
+                    "GIT_SSH_COMMAND": "false",
+                }
+                if global_filters:
+                    environment["GIT_CONFIG_GLOBAL"] = str(self.base / "global.gitconfig")
+                    self.git(
+                        self.source, "lfs", "install", "--skip-repo",
+                        environment=environment,
+                    )
+
+                self.git(
+                    self.base, "clone", "--origin", remote, "gd://repo", str(clone),
+                    environment=environment,
+                )
+
+                actual = (clone / "asset.bin").read_bytes()
+                self.assertEqual(len(actual), len(binary))
+                self.assertEqual(hashlib.sha256(actual).hexdigest(), oid)
+                self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+                self.git(clone, "lfs", "fsck", environment=environment)
+                hook = clone / ".git/hooks/pre-push"
+                if hook.exists():
+                    self.assertNotIn(b"git-lfs-gdrive", hook.read_bytes())
+
+    def test_clone_tag_ignores_lfsconfig_on_another_fetched_branch(self):
+        binary = b"LFS from the selected tag\x00" * 1024
+        self.commit_binary(binary, "binary without an endpoint override")
+        self.git(self.source, "tag", "--annotate", "clean-v1", "--message", "clean release")
+        endpoint = "https://lfs.example.invalid/repository"
+        self.git(self.source, "config", "--file", ".lfsconfig", "lfs.url", endpoint)
+        self.git(self.source, "add", ".lfsconfig")
+        self.git(self.source, "commit", "--quiet", "-m", "external LFS endpoint on main")
+        self.git(self.source, "checkout", "--quiet", "clean-v1")
+        self.git(self.source, "push", "drive", "main", "refs/tags/clean-v1")
+        clone = self.base / "tag-clone"
+        environment = {
+            **self.environment,
+            "GDRIVE_CACHE_DIR": str(self.base / "tag-clone-cache"),
+            "GIT_SSH_COMMAND": "false",
+        }
+
+        self.git(
+            self.base, "clone", "--branch", "clean-v1", "gd://repo", str(clone),
+            environment=environment,
+        )
+
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+        self.assertFalse((clone / ".lfsconfig").exists())
+        self.assertIn(endpoint, self.git(clone, "show", "origin/main:.lfsconfig").stdout)
+        self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+        self.git(clone, "lfs", "fsck", environment=environment)
+
+    def test_clone_without_checkout_prepares_lfs_for_later_download(self):
+        binary = b"deferred LFS download\x00" * 1024
+        oid = self.commit_binary(binary, "binary for deferred checkout")
+        self.git(self.source, "push", "drive", "main")
+
+        for mode in ("--no-checkout", "--bare"):
+            with self.subTest(mode=mode):
+                clone = self.base / mode.removeprefix("--")
+                environment = {
+                    **self.environment,
+                    "GDRIVE_CACHE_DIR": str(self.base / f"cache-{clone.name}"),
+                    "GIT_SSH_COMMAND": "false",
+                }
+                self.git(
+                    self.base, "clone", mode, "gd://repo", str(clone),
+                    environment=environment,
+                )
+                self.assertFalse((clone / "asset.bin").exists())
+                self.assertIn(f"oid sha256:{oid}", self.git(clone, "show", "HEAD:asset.bin").stdout)
+                self.git(clone, "lfs", "fetch", "origin", environment=environment)
+                git_dir = clone if mode == "--bare" else clone / ".git"
+                local_object = git_dir / "lfs/objects" / oid[:2] / oid[2:4] / oid
+                self.assertEqual(local_object.read_bytes(), binary)
+                if mode == "--no-checkout":
+                    self.git(clone, "reset", "--hard", "HEAD", environment=environment)
+                    self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+
+    def test_restore_recovers_clone_after_a_missing_lfs_object_is_restored(self):
+        binary = b"recover failed checkout\x00" * 1024
+        oid = self.commit_binary(binary, "binary for checkout recovery")
+        self.git(self.source, "push", "drive", "main")
+        remote_object = (
+            self.drive / "repo/.git-remote-gdrive/lfs/objects" / oid[:2] / oid
+        )
+        saved_object = self.base / "saved-object"
+        remote_object.rename(saved_object)
         self.environment["GDRIVE_CACHE_DIR"] = str(self.base / "clone-cache")
         clone = self.base / "failed-clone"
 
         result = self.git(
-            self.base, "clone", "gd://repo", str(clone),
-            environment={**self.environment, "GIT_SSH_COMMAND": "false"},
-            expect_success=False,
+            self.base, "-c", "lfs.transfer.maxretries=1", "-c", "lfs.transfer.maxretrydelay=0",
+            "clone", "gd://repo", str(clone), expect_success=False,
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Clone succeeded, but checkout failed", result.stderr)
-        self.command(clone, "git-lfs-gdrive", "install", "origin")
+        saved_object.rename(remote_object)
         self.git(clone, "restore", "--source=HEAD", "--staged", "--worktree", ":/")
         self.assertEqual((clone / "asset.bin").read_bytes(), binary)
         self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")

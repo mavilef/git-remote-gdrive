@@ -157,19 +157,27 @@ endpoints LFS conflitantes interrompem a preparação automática sem sobrescrev
 essas configurações.
 Repositórios sem arquivos LFS continuam funcionando sem instalar Git LFS.
 
-Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
-arquivos. A preparação automática ocorre no push; o download ainda precisa da
-configuração local do agente, que não é copiada pelo clone:
+O clone também configura o download LFS automaticamente, antes do checkout:
+
+```bash
+git clone gd://1AbCdEfGhIjKlMn meu-repositorio
+```
+
+Com Git LFS instalado, os arquivos são restaurados durante o próprio clone,
+sem executar `git-lfs-gdrive install`. A configuração é local ao repositório;
+hooks existentes e o destino de upload são preservados.
+
+Para adiar o download dos arquivos grandes, ainda é possível usar:
 
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone gd://1AbCdEfGhIjKlMn meu-repositorio
 cd meu-repositorio
-git-lfs-gdrive install origin
 git lfs pull origin
 ```
 
-Se um clone direto terminou com `Clone succeeded, but checkout failed` e erro
-`Could not resolve hostname gd`, configure o agente e conclua o checkout na pasta
+Se um clone feito com uma versão anterior terminou com `Clone succeeded, but
+checkout failed` e erro `Could not resolve hostname gd`, atualize o helper,
+configure o agente e conclua o checkout na pasta
 que o Git criou. Execute a recuperação abaixo apenas nesse clone recém-criado,
 antes de fazer alterações locais, pois ela restaura o índice e os arquivos de
 trabalho a partir de `HEAD`:

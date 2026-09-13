@@ -61,9 +61,8 @@ def _build_store(remote: str, operation: str) -> LFSObjectStore:
     )
 
 
-def _check_endpoint_overrides() -> None:
-    # Git LFS gives lfs.url/pushurl precedence over remote-specific endpoints.
-    # It also reads .lfsconfig from the worktree, index, or HEAD, in that order.
+def _lfs_config_sources() -> list[list[str]]:
+    # Git LFS reads .lfsconfig from the worktree, index, or HEAD, in that order.
     worktree = _git("rev-parse", "--show-toplevel", check=False)
     root = Path(worktree.stdout.strip()) if worktree.returncode == 0 else None
     if root is not None and (root / ".lfsconfig").exists():
@@ -72,8 +71,16 @@ def _check_endpoint_overrides() -> None:
         config_source = ["--blob", ":.lfsconfig"]
     else:
         config_source = ["--blob", "HEAD:.lfsconfig"]
-    for key in ("lfs.url", "lfs.pushurl"):
-        for source in ([], config_source):
+    return [[], config_source]
+
+
+def _check_endpoint_overrides(
+    *, keys: Sequence[str] = ("lfs.url", "lfs.pushurl")
+) -> None:
+    # These settings take precedence over remote-specific endpoints.
+    sources = _lfs_config_sources()
+    for key in keys:
+        for source in sources:
             result = _git("config", *source, "--get", key, check=False)
             if result.returncode == 0 and result.stdout.strip():
                 raise ConfigurationError(
@@ -105,6 +112,48 @@ def prepare_push(remote: str) -> None:
             f"{key} overrides Drive LFS uploads; remove it to use automatic Drive LFS"
         )
     install_lfs_hooks(_git)
+
+
+def prepare_fetch(remote: str, url: str, object_ids: Sequence[str]) -> None:
+    """Configure LFS downloads before checkout, including the first clone."""
+    version = _git("lfs", "version", check=False)
+    if version.returncode:
+        return
+    commits = []
+    for object_id in dict.fromkeys(object_ids):
+        result = _git("rev-parse", "--verify", f"{object_id}^{{commit}}", check=False)
+        if result.returncode == 0:
+            commits.append(result.stdout.strip())
+    commits = list(dict.fromkeys(commits))
+    if not any(
+        _git("lfs", "ls-files", "--name-only", commit).stdout.strip()
+        for commit in commits
+    ):
+        return
+    _check_lfs_version(version.stdout)
+    # Check effective configuration, not other branches fetched alongside the
+    # selected revision. Git LFS reads that revision's .lfsconfig at checkout.
+    _check_endpoint_overrides(keys=("lfs.url",))
+    key = f"remote.{remote}.lfsurl"
+    for source in _lfs_config_sources():
+        existing = _git("config", *source, "--get", key, check=False).stdout.strip()
+        if existing and not existing.startswith("https://git-remote-gdrive.invalid/"):
+            raise ConfigurationError(
+                f"{key} overrides Drive LFS downloads; remove it to use automatic Drive LFS"
+            )
+    folder = get_folder_id_from_google_drive_url(url)
+    endpoint = f"https://git-remote-gdrive.invalid/{folder}"
+    # Fetch must preserve custom hooks and the endpoint used for uploads.
+    _git("lfs", "install", "--local", "--skip-repo")
+    settings = {
+        "lfs.customtransfer.gdrive.path": "git-lfs-gdrive",
+        "lfs.customtransfer.gdrive.concurrent": "false",
+        "lfs.customtransfer.gdrive.direction": "both",
+        key: endpoint,
+        f"lfs.{endpoint}.standalonetransferagent": "gdrive",
+    }
+    for key, value in settings.items():
+        _git("config", "--local", "--replace-all", key, value)
 
 
 def install(remote: str) -> None:

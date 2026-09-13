@@ -23,11 +23,13 @@ class RemoteHelperProtocol:
         stdout: TextIO,
         *,
         prepare_push: Callable[[], None] | None = None,
+        prepare_fetch: Callable[[list[str]], None] | None = None,
     ) -> None:
         self.remote_factory = remote_factory
         self.stdin = stdin
         self.stdout = stdout
         self.prepare_push = prepare_push
+        self.prepare_fetch = prepare_fetch
         self._remote: GitDriveRemote | None = None
         self.options = {
             "verbosity": 1,
@@ -132,6 +134,10 @@ class RemoteHelperProtocol:
             requests,
             check_connectivity=bool(self.options["check-connectivity"]),
         )
+        if self.options["cloning"] and self.prepare_fetch is not None:
+            # Clone has the objects but no local refs yet. Configure filters
+            # before acknowledging the fetch so Git can use them for checkout.
+            self.prepare_fetch([request.object_id for request in requests])
         if self.options["check-connectivity"]:
             self._write_line("connectivity-ok")
         self._write_line()

@@ -74,6 +74,51 @@ class TestRemoteHelperProtocol(unittest.TestCase):
         factory.assert_not_called()
         self.assertEqual(output.getvalue(), "")
 
+    def test_fetch_prepares_lfs_after_objects_arrive_before_checkout_ack(self):
+        remote = Mock()
+        output = io.StringIO()
+        object_id = "1" * 40
+
+        def prepare(object_ids):
+            remote.fetch.assert_called_once()
+            self.assertEqual(object_ids, [object_id])
+            self.assertEqual(output.getvalue(), "ok\nok\n")
+
+        protocol = RemoteHelperProtocol(
+            lambda: remote,
+            io.StringIO(
+                "option cloning true\noption check-connectivity true\n"
+                f"fetch {object_id} refs/heads/main\n\n"
+            ),
+            output, prepare_fetch=prepare,
+        )
+
+        self.assertEqual(protocol.run(), 0)
+        self.assertEqual(output.getvalue(), "ok\nok\nconnectivity-ok\n\n")
+
+    def test_failed_fetch_setup_does_not_acknowledge_success(self):
+        output = io.StringIO()
+        protocol = RemoteHelperProtocol(
+            Mock(), io.StringIO(f"option cloning true\nfetch {'1' * 40} refs/heads/main\n\n"), output,
+            prepare_fetch=Mock(side_effect=ConfigurationError("LFS endpoint conflict")),
+        )
+
+        with self.assertLogs("git_remote_gdrive.protocol", level="ERROR"):
+            self.assertEqual(protocol.run(), 1)
+        self.assertEqual(output.getvalue(), "ok\n")
+
+    def test_normal_fetch_does_not_prepare_clone_configuration(self):
+        prepare = Mock()
+        output = io.StringIO()
+        protocol = RemoteHelperProtocol(
+            Mock(), io.StringIO(f"fetch {'1' * 40} refs/heads/main\n\n"), output,
+            prepare_fetch=prepare,
+        )
+
+        self.assertEqual(protocol.run(), 0)
+        prepare.assert_not_called()
+        self.assertEqual(output.getvalue(), "\n")
+
     def test_push_status(self):
         remote = Mock()
         result = Mock(destination="refs/heads/main", ok=True, message=None)

@@ -104,7 +104,7 @@ class TestGitEndToEnd(unittest.TestCase):
                     clone = base / f"{name}-clone"
                     run(base, environment, "clone", "--quiet", f"gd://{name}", str(clone))
                     self.assertEqual((clone / "message.txt").read_text(), "ordinary content\n")
-            self.assertEqual(unavailable_log.read_text().splitlines(), ["lfs version"] * 2)
+            self.assertEqual(unavailable_log.read_text().splitlines(), ["lfs version"] * 4)
 
     def test_push_clone_fetch_and_tag(self):
         with tempfile.TemporaryDirectory() as temporary:

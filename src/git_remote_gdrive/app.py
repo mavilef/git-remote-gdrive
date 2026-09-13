@@ -68,13 +68,16 @@ def main(
         _parser().error(str(exc))
 
     # Import lazily: the LFS transfer agent also uses build_drive_client.
-    from .lfs import prepare_push
+    from .lfs import prepare_fetch, prepare_push
 
     protocol = RemoteHelperProtocol(
         lambda: _build_remote(folder_id),
         stdin or sys.stdin,
         stdout or sys.stdout,
         prepare_push=lambda: prepare_push(args.remote_name),
+        prepare_fetch=lambda object_ids: prepare_fetch(
+            args.remote_name, args.remote_url, object_ids
+        ),
     )
     return protocol.run()
 
