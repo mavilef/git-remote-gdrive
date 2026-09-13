@@ -11,6 +11,7 @@ from typing import Sequence, TextIO
 from .app import build_drive_client
 from .errors import ConfigurationError
 from .lfs_protocol import LFSTransferProtocol
+from .lfs_push import push_with_progress
 from .lfs_store import LFSObjectStore
 from .log_config import configure_logging
 from .utils import get_folder_id_from_google_drive_url
@@ -117,7 +118,18 @@ def main(
     commands = parser.add_subparsers(dest="command")
     installer = commands.add_parser("install", help="configure LFS for a Drive remote")
     installer.add_argument("remote", help="name of an existing Google Drive remote")
-    args = parser.parse_args(argv)
+    commands.add_parser(
+        "push", add_help=False,
+        help="run git push with LFS percentages measured in bytes; forwards all arguments",
+    )
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "push":
+        try:
+            return push_with_progress(arguments[1:], stdout=stdout)
+        except (OSError, ValueError) as exc:
+            print(f"git-lfs-gdrive: {exc}", file=sys.stderr)
+            return 1
+    args = parser.parse_args(arguments)
     if args.command == "install":
         try:
             install(args.remote)

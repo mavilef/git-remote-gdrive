@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -189,6 +190,43 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.assertEqual((clone / "asset.bin").read_bytes(), first)
         self.git(clone, "lfs", "fsck")
 
+    def test_push_wrapper_reports_byte_percentage_and_sets_upstream(self):
+        binary = bytes(range(256)) * (64 * 1024) + b"last byte"
+        self.commit_binary(binary, "binary with visible byte progress")
+
+        process = self.command(
+            self.source, "git-lfs-gdrive", "push", "-u", "drive", "main"
+        )
+
+        percentages = [
+            float(value)
+            for value in re.findall(
+                r"LFS upload asset\.bin: (\d+(?:\.\d+)?)% \(", process.stderr
+            )
+        ]
+        self.assertTrue(
+            any(0 < value < 100 for value in percentages), process.stderr
+        )
+        self.assertEqual(percentages[-1], 100)
+        self.assertIn("MiB / 16.0 MiB)", process.stderr)
+        self.assertIn("[new branch]", process.stderr)
+        self.assertIn("drive/main", process.stdout)
+        self.assertEqual(
+            self.git(
+                self.source, "rev-parse", "--symbolic-full-name", "@{upstream}"
+            ).stdout.strip(),
+            "refs/remotes/drive/main",
+        )
+        head = self.git(self.source, "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(
+            self.git(self.source, "ls-remote", "drive", "refs/heads/main").stdout,
+            f"{head}\trefs/heads/main\n",
+        )
+        clone = self.clone_drive()
+        self.git(clone, "lfs", "pull", "origin")
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+        self.git(clone, "lfs", "fsck")
+
     def test_failed_upload_does_not_advance_git_refs(self):
         self.commit_binary(b"published\x00" * 1024, "published binary")
         self.git(self.source, "push", "drive", "main")
@@ -198,12 +236,23 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         objects.rename(objects.with_name("saved-objects"))
         objects.write_text("uploads blocked", encoding="utf-8")
         self.commit_binary(b"unpublished\xff" * 1024, "unpublished binary")
-        process = self.git(self.source, "push", "drive", "main", expect_success=False)
-        self.assertNotEqual(process.returncode, 0)
-        self.assertEqual(
-            self.git(self.source, "ls-remote", "drive", "refs/heads/main").stdout,
-            before,
-        )
+        returncodes = []
+        for executable in ("git", "git-lfs-gdrive"):
+            with self.subTest(command=executable):
+                process = self.command(
+                    self.source, executable, "push", "drive", "main",
+                    expect_success=False,
+                )
+                returncodes.append(process.returncode)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertIn("failed to push some refs", process.stderr)
+                self.assertEqual(
+                    self.git(
+                        self.source, "ls-remote", "drive", "refs/heads/main"
+                    ).stdout,
+                    before,
+                )
+        self.assertEqual(returncodes[0], returncodes[1])
 
     def test_install_keeps_other_lfs_remote_independent(self):
         other = self.base / "other.git"

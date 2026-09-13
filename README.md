@@ -130,6 +130,21 @@ configura a transferência apenas para o remote escolhido. Os arquivos são
 enviados ao Drive antes das referências Git, usando as mesmas credenciais e
 variáveis do helper. Outros remotes mantêm sua configuração LFS.
 
+Para acompanhar a porcentagem pelos **bytes de cada arquivo**, use:
+
+```bash
+git-lfs-gdrive push -u drive main
+# Nos próximos envios, com upstream configurado:
+git-lfs-gdrive push
+```
+
+Esse comando executa `git push` com os mesmos argumentos e mostra, por exemplo,
+`LFS upload arquivo.bin: 37.5% (384.0 MiB / 1.0 GiB)`. A porcentagem avança
+durante o arquivo e começa novamente para o próximo arquivo. Mensagens, erros
+e o resultado final do Git são preservados; o resumo nativo do LFS ainda pode
+aparecer ao terminar. `100%` indica os bytes transferidos: aguarde o resultado
+final do push para confirmar a publicação.
+
 O Git LFS atualiza os bytes transferidos e a velocidade durante cada arquivo,
 a cada bloco de até 8 MiB. Seu percentual nativo conta objetos concluídos, então
 pode continuar em `0% (0/1)` enquanto o volume transferido aumenta. Nos reenvios,
