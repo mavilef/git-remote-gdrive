@@ -1,0 +1,321 @@
+# git-remote-gdrive
+
+Use uma pasta do Google Drive como remote de um repositório Git.
+
+O helper implementa o protocolo `gitremote-helpers` e armazena os objetos em
+`git bundle`. Cada push acrescenta um bundle imutável com os objetos novos e só
+depois atualiza um manifesto com as refs remotas. Isso permite usar `git clone`,
+`git fetch` e `git push` sem sincronizar a pasta do Drive no sistema de arquivos.
+
+## Estado atual
+
+O MVP suporta:
+
+- clone e fetch;
+- push incremental de branches e tags;
+- exclusão de refs;
+- push forçado e rejeição de non-fast-forward;
+- `git push --dry-run`;
+- cache local dos bundles baixados;
+- verificação SHA-256 de cada bundle;
+- arquivos Git LFS armazenados no Drive, com verificação SHA-256;
+- detecção otimista de pushes concorrentes.
+
+O uso suportado pelo MVP é de um push por vez para cada pasta remota.
+
+## Instalação
+
+Requisitos: Git e Python 3.10 ou mais recente.
+
+Para instalar a partir deste checkout com `uv`:
+
+```bash
+uv tool install .
+```
+
+Durante o desenvolvimento, também é possível usar o ambiente do projeto:
+
+```bash
+uv sync
+export PATH="$PWD/.venv/bin:$PATH"
+```
+
+Confirme que o Git consegue encontrar o helper:
+
+```bash
+git-remote-gdrive --help
+```
+
+## Configuração do Google
+
+1. Crie ou selecione um projeto no Google Cloud.
+2. Ative a Google Drive API.
+3. Configure a tela de consentimento OAuth.
+4. Crie um OAuth Client ID do tipo **Desktop app**.
+5. Baixe o JSON das credenciais.
+
+Defina o caminho do arquivo baixado:
+
+```bash
+export GDRIVE_CREDENTIALS_PATH=~/.config/git-remote-gdrive/credentials.json
+```
+
+Na primeira operação que acessar o Drive, o navegador será aberto para a
+autorização. Por padrão, o token fica em
+`~/.local/state/git-remote-gdrive/token.json`.
+
+Variáveis opcionais:
+
+```bash
+export GDRIVE_TOKEN_PATH=/outro/local/token.json
+export GDRIVE_CACHE_DIR=/disco/com/espaco/git-remote-gdrive-cache
+export GDRIVE_LOG_LEVEL=INFO
+```
+
+O helper solicita o escopo completo do Drive. Use uma conta e um OAuth Client
+ID sob seu controle e proteja tanto o JSON de credenciais quanto o token.
+
+## Uso
+
+Crie uma pasta dedicada no Google Drive e copie seu ID. Em uma URL como:
+
+```text
+https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn
+```
+
+o ID é `1AbCdEfGhIjKlMn`.
+
+Adicione o remote e faça o primeiro push:
+
+```bash
+git remote add drive gd://1AbCdEfGhIjKlMn
+git push -u drive main
+```
+
+Para clonar em outra máquina um repositório sem Git LFS:
+
+```bash
+git clone gd://1AbCdEfGhIjKlMn meu-repositorio
+```
+
+**Se o repositório usa LFS, siga o fluxo de clone da seção [Git LFS](#git-lfs).**
+
+Também são aceitos `gdrive://FOLDER_ID`, `googledrive://FOLDER_ID` e a forma
+explícita `gdrive::FOLDER_ID`.
+
+Branches, tags e exclusões usam os comandos normais do Git:
+
+```bash
+git push drive minha-branch
+git push drive v1.0
+git push drive --delete minha-branch
+git fetch drive
+```
+
+### Git LFS
+
+Com o helper instalado e Git LFS 3.7.1 ou mais recente configurado
+(`git lfs install`, a configuração padrão do Git LFS), use os comandos normais:
+
+```bash
+git lfs track "*.bin"
+git add .gitattributes arquivo.bin
+git commit -m "Adiciona arquivo com LFS"
+git push drive main
+```
+
+No primeiro push com arquivos LFS para o Drive, o helper prepara automaticamente
+o hook de envio e o progresso por bytes. Não é necessário executar
+`git-lfs-gdrive install` antes do push. Os arquivos são enviados ao Drive antes
+das referências Git, usando as mesmas credenciais e variáveis do helper.
+Outros remotes mantêm sua configuração LFS, inclusive quando um mesmo remote
+usa outro servidor para fetch e o Drive para push.
+
+O próprio `git push` mostra a porcentagem pelos **bytes de cada arquivo**:
+
+```bash
+git push -u drive main
+# Nos próximos envios, com upstream configurado:
+git push
+```
+
+Durante o envio ao Drive, aparece, por exemplo,
+`LFS upload arquivo.bin: 37.5% (384.0 MiB / 1.0 GiB)`. A porcentagem avança
+durante o arquivo e começa novamente para o próximo arquivo. Mensagens, erros
+e o resultado final do Git são preservados; o resumo nativo do LFS ainda pode
+aparecer ao terminar. `100%` indica os bytes transferidos: aguarde o resultado
+final do push para confirmar a publicação.
+
+O progresso atualiza a cada bloco de até 8 MiB. Nos reenvios, a verificação do
+objeto já existente no Drive também informa progresso. A verificação inicial
+do arquivo local e a autenticação acontecem antes da transferência e podem
+manter os contadores em zero por algum tempo.
+
+Após atualizar o helper, a preparação também é automática no próximo push de
+repositórios existentes. Hooks personalizados, diretórios de hooks externos e
+endpoints LFS conflitantes interrompem a preparação automática sem sobrescrever
+essas configurações.
+Repositórios sem arquivos LFS continuam funcionando sem instalar Git LFS.
+
+O clone também configura o download LFS automaticamente, antes do checkout:
+
+```bash
+git clone gd://1AbCdEfGhIjKlMn meu-repositorio
+```
+
+Com Git LFS instalado, os arquivos são restaurados durante o próprio clone,
+sem executar `git-lfs-gdrive install`. A configuração é local ao repositório;
+hooks existentes e o destino de upload são preservados.
+
+No terminal, o clone mostra o progresso pelos bytes de cada bundle do histórico
+Git e de cada arquivo LFS, por exemplo:
+
+```text
+LFS download arquivo.bin: 37.5% (384.0 MiB / 1.0 GiB)
+```
+
+As atualizações acontecem em blocos de até 8 MiB. Use `git clone --progress`
+para exibir o progresso também com a saída redirecionada, ou `--no-progress`
+ou `--quiet` para ocultá-lo (`--progress` explícito tem precedência sobre
+`--quiet`). Aguarde o término do clone após a transferência para concluir o
+checkout. Bundles já disponíveis no cache não geram uma barra de download.
+Para arquivos LFS já disponíveis no cache, a barra acompanha os bytes copiados
+para o Git LFS. Ela começa em zero enquanto o cache é verificado e avança
+durante a cópia, sem esperar pelo arquivo inteiro.
+Os bytes continuam atualizando mesmo antes de o percentual avançar 1%.
+Com `--no-checkout`, a opção de progresso do clone também vale para o primeiro
+checkout LFS, quando ele for executado; depois, o filtro padrão é restaurado.
+
+Para adiar o download dos arquivos grandes, ainda é possível usar:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone gd://1AbCdEfGhIjKlMn meu-repositorio
+cd meu-repositorio
+git lfs pull origin
+```
+
+Se um clone feito com uma versão anterior terminou com `Clone succeeded, but
+checkout failed` e erro `Could not resolve hostname gd`, atualize o helper,
+configure o agente e conclua o checkout na pasta
+que o Git criou. Execute a recuperação abaixo apenas nesse clone recém-criado,
+antes de fazer alterações locais, pois ela restaura o índice e os arquivos de
+trabalho a partir de `HEAD`:
+
+```bash
+cd meu-repositorio
+git-lfs-gdrive install origin
+git restore --source=HEAD --staged --worktree :/
+```
+
+Nesse caso, apenas `git lfs pull` pode terminar sem erro e deixar arquivos
+ausentes, porque o checkout interrompido ainda não preencheu o índice.
+
+Ao migrar um repositório que já usa LFS em outro remote, copie também os objetos
+do histórico; publicar apenas as refs Git não garante essa cópia:
+
+```bash
+git lfs fetch --all origin
+git-lfs-gdrive install drive
+git lfs push --all drive
+```
+
+Depois publique as branches e tags com `git push`. Se houver `lfs.url` ou
+`lfs.pushurl` no Git ou em `.lfsconfig`, mova essa configuração para o remote
+correspondente (`remote.<nome>.lfsurl` / `remote.<nome>.lfspushurl`) antes de
+instalar. Um remote pode ter pastas distintas para fetch e push, mas apenas uma
+URL em cada direção. Ao trocar suas URLs, execute o instalador novamente.
+
+## Como os dados ficam no Drive
+
+Dentro da pasta escolhida, o helper mantém apenas esta estrutura:
+
+```text
+.git-remote-gdrive/
+├── manifest.json
+├── bundles/
+│   ├── bundle-00000001-....bundle
+│   └── bundle-00000002-....bundle
+└── lfs/objects/
+    └── <primeiros-2-caracteres-do-hash>/
+        └── <sha256-do-arquivo>
+```
+
+Bundles antigos continuam necessários para reconstruir clones novos. O cache
+local evita baixá-los novamente na mesma máquina. Ele pode crescer até o tamanho
+do histórico remoto e pode ser apagado com segurança quando for necessário
+liberar espaço; os bundles serão baixados de novo no próximo fetch que precisar
+deles.
+
+Os arquivos LFS também usam cache local e são verificados antes de cada envio
+ou uso. No Drive, um objeto existente é verificado e reutilizado nos reenvios.
+
+## Limitações do MVP
+
+- Repositórios com object format SHA-256 ainda não são suportados; o padrão
+  SHA-1 do Git funciona.
+- Shallow clone, partial clone e filtros ainda não são suportados.
+- Os bundles são append-only. Exclusões e force-push não liberam espaço até que
+  exista um comando de compactação/garbage collection.
+- A conferência do manifesto e sua gravação são operações separadas. O helper
+  detecta alterações anteriores à conferência, mas pushes simultâneos ainda
+  podem sobrescrever referências. Execute apenas um push por vez por pasta.
+- O conteúdo dos bundles não recebe criptografia adicional. Quem puder ler a
+  pasta do Drive poderá baixar o histórico Git.
+- Locks de arquivos LFS não são suportados. Objetos LFS antigos não são removidos
+  automaticamente do Drive.
+
+## Desenvolvimento e testes
+
+```bash
+uv sync
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Por padrão, os testes não acessam sua conta. Os testes end-to-end executam Git
+real e o helper instalado sobre um backend local descartável. Os testes da API
+simulam as respostas HTTP usando a biblioteca oficial do Google.
+Os testes LFS usam o executável real do Git LFS e cobrem push, clone, atualização,
+migração do histórico, falha de upload e isolamento entre remotes. São ignorados
+se Git LFS não estiver instalado; a CI exige sua presença.
+
+A CI gera e instala um wheel em um checkout limpo e executa a suíte em Python
+3.14. Para gerar um pacote de distribuição, use também um checkout limpo,
+sem artefatos antigos em `build/`:
+
+```bash
+uv build
+```
+
+### Teste no Google Drive real
+
+Depois de configurar as credenciais, informe o ID de uma pasta de testes:
+
+```bash
+GDRIVE_TEST_FOLDER_ID=ID_DA_PASTA_DE_TESTES \
+  .venv/bin/python -m unittest discover -s tests -p test_live_drive.py -v
+```
+
+Esse teste cria uma subpasta temporária, valida push, clone com cache vazio,
+fetch incremental, tags, exclusão e dry-run, e apaga apenas a subpasta criada ao
+terminar. Sem `GDRIVE_TEST_FOLDER_ID`, ele é ignorado pela suíte. A primeira
+execução pode abrir o navegador para autorização.
+
+### Diagnóstico e recuperação
+
+Para diagnosticar uma operação real:
+
+```bash
+GDRIVE_LOG_LEVEL=DEBUG git fetch drive
+```
+
+Se um push falhar durante a gravação do manifesto, a atualização pode já ter
+sido concluída. Confira `git ls-remote drive` e execute `git fetch drive` antes
+de repetir o push. O helper preserva os bundles após tentar publicar o manifesto;
+uma falha pode deixar bundles sem referência, que ocuparão espaço até existir
+compactação/garbage collection.
+
+Documentação de referência:
+
+- [Git remote helpers](https://git-scm.com/docs/gitremote-helpers)
+- [Git bundle](https://git-scm.com/docs/git-bundle)
+- [Google Drive API Python quickstart](https://developers.google.com/workspace/drive/api/quickstart/python)

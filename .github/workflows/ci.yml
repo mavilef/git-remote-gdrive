@@ -1,0 +1,23 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Check Git LFS
+        run: git lfs version
+      - name: Build and install wheel
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python -m pip install dist/*.whl
+      - name: Run tests against installed package
+        run: python -m unittest discover -s tests -v

@@ -1,7 +1,28 @@
 [project]
-name = "git-gdrive-remote"
-version = "0.1.0"
-description = "Add your description here"
+name = "git-remote-gdrive"
+version = "0.2.0"
+description = "Use a Google Drive folder as a Git remote"
+authors = [{name = "Marcelo Vilela", email = "marcelo.filho.cps@gmail.com"}]
+license = "MIT"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.10"
+
+dependencies = [
+    "google-api-python-client>=2.169.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.2",
+]
+
+[project.scripts]
+git-remote-gdrive = "git_remote_gdrive.app:main"
+git-remote-gd = "git_remote_gdrive.app:main"
+git-remote-googledrive = "git_remote_gdrive.app:main"
+git-remote-google-drive = "git_remote_gdrive.app:main"
+git-lfs-gdrive = "git_remote_gdrive.lfs:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
