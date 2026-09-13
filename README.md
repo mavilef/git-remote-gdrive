@@ -92,11 +92,13 @@ git remote add drive gd://1AbCdEfGhIjKlMn
 git push -u drive main
 ```
 
-Para clonar em outra máquina:
+Para clonar em outra máquina um repositório sem Git LFS:
 
 ```bash
 git clone gd://1AbCdEfGhIjKlMn meu-repositorio
 ```
+
+**Se o repositório usa LFS, siga o fluxo de clone da seção [Git LFS](#git-lfs).**
 
 Também são aceitos `gdrive://FOLDER_ID`, `googledrive://FOLDER_ID` e a forma
 explícita `gdrive::FOLDER_ID`.
@@ -129,7 +131,7 @@ enviados ao Drive antes das referências Git, usando as mesmas credenciais e
 variáveis do helper. Outros remotes mantêm sua configuração LFS.
 
 Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
-arquivos:
+arquivos. A configuração do agente é local e não é copiada pelo clone:
 
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone gd://1AbCdEfGhIjKlMn meu-repositorio
@@ -137,6 +139,21 @@ cd meu-repositorio
 git-lfs-gdrive install origin
 git lfs pull origin
 ```
+
+Se um clone direto terminou com `Clone succeeded, but checkout failed` e erro
+`Could not resolve hostname gd`, configure o agente e conclua o checkout na pasta
+que o Git criou. Execute a recuperação abaixo apenas nesse clone recém-criado,
+antes de fazer alterações locais, pois ela restaura o índice e os arquivos de
+trabalho a partir de `HEAD`:
+
+```bash
+cd meu-repositorio
+git-lfs-gdrive install origin
+git restore --source=HEAD --staged --worktree :/
+```
+
+Nesse caso, apenas `git lfs pull` pode terminar sem erro e deixar arquivos
+ausentes, porque o checkout interrompido ainda não preencheu o índice.
 
 Ao migrar um repositório que já usa LFS em outro remote, copie também os objetos
 do histórico; publicar apenas as refs Git não garante essa cópia:

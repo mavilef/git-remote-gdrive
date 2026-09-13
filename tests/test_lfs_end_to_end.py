@@ -107,6 +107,29 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.assertEqual((clone / "asset.bin").read_bytes(), second)
         self.git(clone, "lfs", "fsck")
 
+    def test_restore_recovers_clone_with_unconfigured_global_lfs_filters(self):
+        binary = b"recover failed checkout\x00" * 1024
+        self.commit_binary(binary, "binary for checkout recovery")
+        self.git(self.source, "push", "drive", "main")
+        self.environment["GIT_CONFIG_GLOBAL"] = str(self.base / "global.gitconfig")
+        self.git(self.source, "lfs", "install", "--skip-repo")
+        self.environment["GDRIVE_CACHE_DIR"] = str(self.base / "clone-cache")
+        clone = self.base / "failed-clone"
+
+        result = self.git(
+            self.base, "clone", "gd://repo", str(clone),
+            environment={**self.environment, "GIT_SSH_COMMAND": "false"},
+            expect_success=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Clone succeeded, but checkout failed", result.stderr)
+        self.command(clone, "git-lfs-gdrive", "install", "origin")
+        self.git(clone, "restore", "--source=HEAD", "--staged", "--worktree", ":/")
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+        self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+        self.git(clone, "lfs", "fsck")
+
     def test_push_all_migrates_objects_from_previous_commits(self):
         first = b"historical\x00" * 1024
         self.commit_binary(first, "old binary")
