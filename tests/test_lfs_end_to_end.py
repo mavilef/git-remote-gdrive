@@ -194,6 +194,43 @@ class TestGitLFSEndToEnd(unittest.TestCase):
                     "git-lfs filter-process",
                 )
 
+    def test_second_clone_reports_cached_lfs_copy_bytes_without_remote_download(self):
+        binary = bytes(range(256)) * (64 * 1024) + b"cached checkout"
+        oid = self.commit_binary(binary, "binary for repeated clone")
+        self.git(self.source, "push", "drive", "main")
+        environment = {
+            **self.environment,
+            "GDRIVE_CACHE_DIR": str(self.base / "shared-clone-cache"),
+            "GIT_SSH_COMMAND": "false",
+        }
+        self.git(
+            self.base, "clone", "--progress", "gd://repo", str(self.base / "first-clone"),
+            environment=environment,
+        )
+        remote_object = (
+            self.drive / "repo" / ".git-remote-gdrive" / "lfs" / "objects" / oid[:2] / oid
+        )
+        remote_object.unlink()
+        clone = self.base / "second-clone"
+
+        result = self.git(
+            self.base, "clone", "--progress", "gd://repo", str(clone),
+            environment=environment,
+        )
+
+        percentages = [
+            float(value)
+            for value in re.findall(
+                r"LFS download asset\.bin: (\d+(?:\.\d+)?)% \(", result.stderr,
+            )
+        ]
+        self.assertTrue(any(0 < value < 100 for value in percentages), result.stderr)
+        self.assertEqual(percentages[-1], 100)
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertEqual((clone / "asset.bin").read_bytes(), binary)
+        self.assertEqual(self.git(clone, "status", "--porcelain").stdout, "")
+        self.git(clone, "lfs", "fsck", environment=environment)
+
     def test_deferred_clone_restores_filter_after_first_checkout(self):
         binary = bytes(range(256)) * (64 * 1024) + b"deferred checkout"
         self.commit_binary(binary, "binary for deferred progress")

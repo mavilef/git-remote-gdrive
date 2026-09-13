@@ -85,6 +85,8 @@ class LFSTransferProtocol:
 
             # OAuth and backend diagnostics must not enter the JSON stream.
             with redirect_stdout(sys.stderr):
+                if self.operation == "download":
+                    record_download_progress(oid, 0, size)
                 if self._store is None:
                     self._store = self.store_factory(self.remote, self.operation)
                 if self.operation == "upload":

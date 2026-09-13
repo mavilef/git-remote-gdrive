@@ -179,6 +179,10 @@ para exibir o progresso também com a saída redirecionada, ou `--no-progress`
 ou `--quiet` para ocultá-lo (`--progress` explícito tem precedência sobre
 `--quiet`). Aguarde o término do clone após a transferência para concluir o
 checkout. Bundles já disponíveis no cache não geram uma barra de download.
+Para arquivos LFS já disponíveis no cache, a barra acompanha os bytes copiados
+para o Git LFS. Ela começa em zero enquanto o cache é verificado e avança
+durante a cópia, sem esperar pelo arquivo inteiro.
+Os bytes continuam atualizando mesmo antes de o percentual avançar 1%.
 Com `--no-checkout`, a opção de progresso do clone também vale para o primeiro
 checkout LFS, quando ele for executado; depois, o filtro padrão é restaurado.
 

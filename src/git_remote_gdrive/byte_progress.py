@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from time import monotonic
 from typing import TextIO
 
 
@@ -25,6 +26,7 @@ class ByteProgressReporter:
         self._last_key: tuple[str, str, int] | None = None
         self._last_bytes = 0
         self._last_percent = -1
+        self._last_report_time = 0.0
 
     def update(self, line: str) -> None:
         fields = line.rstrip("\r\n").split(maxsplit=3)
@@ -49,17 +51,20 @@ class ByteProgressReporter:
 
         percent = transferred * 100 // size if size else 100
         key = (direction, name, size)
+        now = monotonic()
         repeated = (
             key == self._last_key
             and percent == self._last_percent
             and transferred >= self._last_bytes
             and transferred != size
+            and (transferred == self._last_bytes or now - self._last_report_time < 0.1)
         )
         self._last_key = key
         self._last_percent = percent
         self._last_bytes = transferred
         if repeated:
             return
+        self._last_report_time = now
 
         name = "".join(character if character.isprintable() else "?" for character in name)
         tenths = transferred * 1000 // size if size else 1000

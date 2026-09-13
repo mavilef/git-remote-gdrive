@@ -62,6 +62,57 @@ class TestLFSObjectStore(unittest.TestCase):
         upload.assert_not_called()
         download.assert_called_once()
 
+    def test_cached_download_reports_bytes_before_handoff_copy_finishes(self):
+        content = bytes(range(256)) * (64 * 1024) + b"last byte"
+        oid, source = self.source(content)
+        self.store.upload(oid, len(content), source)
+        cold_progress = []
+        self.store.download(oid, len(content), progress=cold_progress.append).unlink()
+        cached = self.base / "cache" / "lfs" / "objects" / oid[:2] / oid
+        progress = []
+
+        def copied(transferred):
+            handoffs = list(cached.parent.glob(f".{oid}.handoff.*"))
+            self.assertEqual(len(handoffs), 1)
+            if transferred < len(content):
+                self.assertEqual(handoffs[0].stat().st_size, transferred)
+            if not progress:
+                self.assertLess(transferred, len(content))
+            progress.append(transferred)
+
+        with patch.object(self.client, "download_to_path") as download:
+            handoff = self.store.download(oid, len(content), progress=copied)
+
+        download.assert_not_called()
+        self.assertGreater(len(progress), 1)
+        self.assertEqual(progress, sorted(set(progress)))
+        self.assertEqual(progress[-1], len(content))
+        self.assertEqual(cold_progress, sorted(set(cold_progress)))
+        self.assertEqual(cold_progress[-1], len(content))
+        self.assertEqual(handoff.read_bytes(), content)
+        self.assertEqual(cached.read_bytes(), content)
+
+    def test_interrupted_cached_download_removes_handoff_and_preserves_cache(self):
+        content = bytes(range(256)) * (64 * 1024)
+        oid, source = self.source(content)
+        self.store.upload(oid, len(content), source)
+        self.store.download(oid, len(content)).unlink()
+        cached = self.base / "cache" / "lfs" / "objects" / oid[:2] / oid
+
+        def interrupted(transferred):
+            self.assertGreater(transferred, 0)
+            self.assertLess(transferred, len(content))
+            raise DriveError("handoff interrupted")
+
+        with patch.object(self.client, "download_to_path") as download:
+            with self.assertRaisesRegex(DriveError, "handoff interrupted"):
+                self.store.download(oid, len(content), progress=interrupted)
+            self.assertEqual(list(cached.parent.glob(f".{oid}.handoff.*")), [])
+            self.assertEqual(cached.read_bytes(), content)
+            retried = self.store.download(oid, len(content))
+        download.assert_not_called()
+        self.assertEqual(retried.read_bytes(), content)
+
     def test_upload_with_lost_response_can_be_retried(self):
         content = b"committed despite lost response"
         oid, source = self.source(content)

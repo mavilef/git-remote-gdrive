@@ -120,7 +120,8 @@ class LFSObjectStore:
     ) -> Path:
         self._validate(oid, size)
         destination = self._cache_path(oid)
-        if not self._matches(destination, oid, size):
+        cached = self._matches(destination, oid, size)
+        if not cached:
             folder = self._object_folder(oid, create=False)
             item = self.client.find_child(folder.id, oid) if folder is not None else None
             if item is None:
@@ -135,7 +136,17 @@ class LFSObjectStore:
         os.close(descriptor)
         handoff = Path(temporary_name)
         try:
-            shutil.copyfile(destination, handoff)
+            if cached and progress is not None:
+                transferred = 0
+                with destination.open("rb") as reader, handoff.open("wb") as writer:
+                    while chunk := reader.read(8 * 1024 * 1024):
+                        writer.write(chunk)
+                        transferred += len(chunk)
+                        progress(transferred)
+            else:
+                # A remote download already reported these bytes. Only report
+                # the local copy when it is serving an object from the cache.
+                shutil.copyfile(destination, handoff)
         except BaseException:
             handoff.unlink(missing_ok=True)
             raise

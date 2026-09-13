@@ -46,7 +46,8 @@ class TestByteProgressReporter(unittest.TestCase):
         reporter.finish()
         self.assertEqual(stream.getvalue(), "")
 
-    def test_suppresses_same_integer_percentage_but_reports_final_bytes(self):
+    @patch("git_remote_gdrive.byte_progress.monotonic", return_value=0)
+    def test_throttles_rapid_same_percentage_updates_but_reports_final_bytes(self, clock):
         stream = io.StringIO()
         reporter = ByteProgressReporter(stream)
         for transferred in (100, 101, 109, 110, 999, 1000, 1000):
@@ -59,7 +60,8 @@ class TestByteProgressReporter(unittest.TestCase):
         self.assertIn("100.0%", lines[3])
         self.assertEqual(lines[3], lines[4])
 
-    def test_retry_can_regress_within_same_percentage_after_suppressed_update(self):
+    @patch("git_remote_gdrive.byte_progress.monotonic", return_value=0)
+    def test_retry_can_regress_within_same_percentage_after_suppressed_update(self, clock):
         stream = io.StringIO()
         reporter = ByteProgressReporter(stream)
         for transferred in (501, 509, 505, 120, 501):
@@ -69,6 +71,18 @@ class TestByteProgressReporter(unittest.TestCase):
         self.assertIn("50.5%", lines[1])
         self.assertIn("12.0%", lines[2])
         self.assertIn("50.1%", lines[3])
+
+    def test_reports_growing_bytes_without_waiting_for_one_percent_of_large_file(self):
+        stream = io.StringIO()
+        reporter = ByteProgressReporter(stream)
+        size = 100 * 1024**3
+        with patch("git_remote_gdrive.byte_progress.monotonic", side_effect=(0, 1, 2, 3)):
+            for transferred in (0, 8 * 1024**2, 16 * 1024**2, 16 * 1024**2):
+                reporter.report("download", "large.bin", transferred, size)
+        lines = stream.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn("0.0% (8.0 MiB / 100.0 GiB)", lines[1])
+        self.assertIn("0.0% (16.0 MiB / 100.0 GiB)", lines[2])
 
     def test_retry_file_index_can_exceed_estimated_file_count(self):
         stream = io.StringIO()
