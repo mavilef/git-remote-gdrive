@@ -24,6 +24,9 @@ class TestLFSPush(unittest.TestCase):
         self.environment.update({
             "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
             "TEST_ROOT": str(self.base),
+            # These tests compare subprocess streams byte for byte. Ignore the
+            # Google dependency's Python 3.10 EOL notice in the test fixture.
+            "PYTHONWARNINGS": "ignore::FutureWarning:google.api_core._python_version_support",
         })
         self.command = [sys.executable, "-m", "git_remote_gdrive.lfs", "push"]
 
