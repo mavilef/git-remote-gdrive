@@ -67,10 +67,14 @@ def main(
     except ValueError as exc:
         _parser().error(str(exc))
 
+    # Import lazily: the LFS transfer agent also uses build_drive_client.
+    from .lfs import prepare_push
+
     protocol = RemoteHelperProtocol(
         lambda: _build_remote(folder_id),
         stdin or sys.stdin,
         stdout or sys.stdout,
+        prepare_push=lambda: prepare_push(args.remote_name),
     )
     return protocol.run()
 

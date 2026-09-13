@@ -34,15 +34,17 @@ def install_lfs_hooks(
         git("rev-parse", "--path-format=absolute", "--git-path", "hooks").stdout.strip()
     ) / "pre-push"
     roots = [
-        Path(git("rev-parse", "--path-format=absolute", option).stdout.strip()).resolve()
-        for option in ("--show-toplevel", "--git-common-dir")
+        Path(git("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()).resolve()
     ]
+    worktree = git("rev-parse", "--show-toplevel", check=False)
+    if worktree.returncode == 0:
+        roots.append(Path(worktree.stdout.strip()).resolve())
     if hook.is_symlink():
         raise ConfigurationError(f"Refusing to replace a symbolic-link hook: {hook}")
     if not any(hook.resolve().is_relative_to(root) for root in roots):
         raise ConfigurationError(
             f"core.hooksPath points outside this repository: {hook.parent}; "
-            "integrate git-lfs-gdrive pre-push into your existing hooks manually"
+            "automatic Drive LFS requires a repository-local hooks directory"
         )
     existing = hook.read_bytes() if hook.exists() else None
     if existing == MANAGED_PRE_PUSH_HOOK:

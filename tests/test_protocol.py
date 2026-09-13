@@ -2,6 +2,7 @@ import io
 import unittest
 from unittest.mock import Mock
 
+from git_remote_gdrive.errors import ConfigurationError
 from git_remote_gdrive.protocol import RemoteHelperProtocol
 
 
@@ -43,6 +44,35 @@ class TestRemoteHelperProtocol(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertEqual(output, "ok\nok\nunsupported\n")
+
+    def test_push_preparation_runs_before_advertising_refs_only_for_push(self):
+        for command in ("list", "list for-push"):
+            with self.subTest(command=command):
+                output = io.StringIO()
+                remote = Mock()
+                remote.list_refs.return_value = []
+                prepare = Mock(side_effect=lambda: self.assertEqual(output.getvalue(), ""))
+                protocol = RemoteHelperProtocol(
+                    lambda: remote, io.StringIO(command + "\n"), output,
+                    prepare_push=prepare,
+                )
+
+                self.assertEqual(protocol.run(), 0)
+                self.assertEqual(prepare.call_count, int(command == "list for-push"))
+                self.assertEqual(output.getvalue(), "\n")
+
+    def test_setup_conflict_stops_push_before_contacting_drive(self):
+        factory = Mock()
+        output = io.StringIO()
+        protocol = RemoteHelperProtocol(
+            factory, io.StringIO("list for-push\n"), output,
+            prepare_push=Mock(side_effect=ConfigurationError("custom hook conflict")),
+        )
+
+        with self.assertLogs("git_remote_gdrive.protocol", level="ERROR"):
+            self.assertEqual(protocol.run(), 1)
+        factory.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
 
     def test_push_status(self):
         remote = Mock()

@@ -145,6 +145,18 @@ class TestLFSHooks(unittest.TestCase):
 
         self.assertEqual(self.hook.read_bytes(), MANAGED_PRE_PUSH_HOOK)
 
+    def test_installs_and_reinstalls_hooks_in_bare_repository(self):
+        self.repo = self.base / "bare.git"
+        self.repo.mkdir()
+        self.git("init", "--bare", "--quiet")
+
+        install_lfs_hooks(self.git)
+        install_lfs_hooks(self.git)
+
+        hook = self.repo / "hooks/pre-push"
+        self.assertEqual(hook.read_bytes(), MANAGED_PRE_PUSH_HOOK)
+        self.assertTrue(os.access(hook, os.X_OK))
+
     @unittest.skipUnless(os.name == "posix", "shell hook requires POSIX")
     def test_hook_preserves_arguments_stdin_and_status_for_each_remote_kind(self):
         binary = self.base / "bin"

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import BinaryIO, Sequence, TextIO
 
 from .byte_progress import ByteProgressReporter
+from .utils import get_folder_id_from_google_drive_url
 
 
 def pre_push_with_progress(
@@ -20,6 +21,21 @@ def pre_push_with_progress(
     stderr: TextIO | None = None,
 ) -> int:
     """Run the LFS pre-push hook, displaying its per-file byte counters."""
+    remote, url = arguments
+    folder_id = get_folder_id_from_google_drive_url(url)
+    endpoint = f"https://git-remote-gdrive.invalid/{folder_id}"
+    settings = {
+        "lfs.forceprogress": "false",
+        "lfs.customtransfer.gdrive.path": "git-lfs-gdrive",
+        "lfs.customtransfer.gdrive.concurrent": "false",
+        "lfs.customtransfer.gdrive.direction": "both",
+        f"remote.{remote}.lfspushurl": endpoint,
+        f"lfs.{endpoint}.standalonetransferagent": "gdrive",
+    }
+    command = ["git"]
+    for key, value in settings.items():
+        command.extend(["-c", f"{key}={value}"])
+    command.extend(["lfs", "pre-push", *arguments])
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     reporter = ByteProgressReporter(stderr)
@@ -71,7 +87,7 @@ def pre_push_with_progress(
             # and errors still reach their original streams. Inherit stdin so
             # Git LFS receives exactly the ref updates supplied by git push.
             process = subprocess.Popen(
-                ["git", "-c", "lfs.forceprogress=false", "lfs", "pre-push", *arguments],
+                command,
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

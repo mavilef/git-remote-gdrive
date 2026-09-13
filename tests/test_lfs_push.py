@@ -106,6 +106,42 @@ class TestLFSPrePush(unittest.TestCase):
         self.assertTrue(Path(invocation["log"]).is_absolute())
         self.assertFalse(Path(invocation["log"]).exists())
 
+    def test_configures_only_this_upload_from_its_actual_url(self):
+        self.fake_git(r"""
+            with (root / 'invocations.jsonl').open('a') as output:
+                output.write(json.dumps(sys.argv[1:]) + '\n')
+        """)
+        endpoint = "https://git-remote-gdrive.invalid/push-folder"
+        for remote in ("drive", "gd://push-folder"):
+            with self.subTest(remote=remote):
+                self.arguments = [remote, "gd://push-folder"]
+
+                result = self.run_hook()
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual = json.loads(
+                    (self.base / "invocations.jsonl").read_text().splitlines()[-1]
+                )
+                command_index = actual.index("lfs")
+                options = actual[:command_index]
+                self.assertEqual(options[::2], ["-c"] * (len(options) // 2))
+                settings = dict(option.split("=", 1) for option in options[1::2])
+                self.assertEqual(settings, {
+                    "lfs.forceprogress": "false",
+                    "lfs.customtransfer.gdrive.path": "git-lfs-gdrive",
+                    "lfs.customtransfer.gdrive.concurrent": "false",
+                    "lfs.customtransfer.gdrive.direction": "both",
+                    f"remote.{remote}.lfspushurl": endpoint,
+                    f"lfs.{endpoint}.standalonetransferagent": "gdrive",
+                })
+                self.assertEqual(
+                    actual[command_index:], ["lfs", "pre-push", *self.arguments]
+                )
+        # Config is passed in this one invocation, with no `git config` writes.
+        self.assertEqual(
+            len((self.base / "invocations.jsonl").read_text().splitlines()), 2
+        )
+
     def test_push_alias_forwards_flags_without_starting_another_progress_monitor(self):
         self.fake_git(r"""
             (root / 'invocation.json').write_text(json.dumps({

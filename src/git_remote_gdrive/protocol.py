@@ -21,10 +21,13 @@ class RemoteHelperProtocol:
         remote_factory: Callable[[], GitDriveRemote],
         stdin: TextIO,
         stdout: TextIO,
+        *,
+        prepare_push: Callable[[], None] | None = None,
     ) -> None:
         self.remote_factory = remote_factory
         self.stdin = stdin
         self.stdout = stdout
+        self.prepare_push = prepare_push
         self._remote: GitDriveRemote | None = None
         self.options = {
             "verbosity": 1,
@@ -172,6 +175,10 @@ class RemoteHelperProtocol:
                 elif command.startswith("option "):
                     self._option(command)
                 elif command in {"list", "list for-push"}:
+                    # Git runs pre-push after this response, so a newly
+                    # installed hook can handle even the first push.
+                    if command == "list for-push" and self.prepare_push is not None:
+                        self.prepare_push()
                     self._list()
                 elif command.startswith("fetch "):
                     self._fetch(command)

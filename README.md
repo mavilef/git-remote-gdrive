@@ -114,21 +114,22 @@ git fetch drive
 
 ### Git LFS
 
-Com Git LFS 3.7.1 ou mais recente instalado, configure cada clone que usará LFS
-no Drive:
+Com o helper instalado e Git LFS 3.7.1 ou mais recente configurado
+(`git lfs install`, a configuração padrão do Git LFS), use os comandos normais:
 
 ```bash
-git-lfs-gdrive install drive
 git lfs track "*.bin"
 git add .gitattributes arquivo.bin
 git commit -m "Adiciona arquivo com LFS"
 git push drive main
 ```
 
-O comando instala os filtros do Git LFS e um hook de pre-push com progresso por
-bytes no repositório, configurando a transferência para o remote escolhido. Os
-arquivos são enviados ao Drive antes das referências Git, usando as mesmas
-credenciais e variáveis do helper. Outros remotes mantêm sua configuração LFS.
+No primeiro push com arquivos LFS para o Drive, o helper prepara automaticamente
+o hook de envio e o progresso por bytes. Não é necessário executar
+`git-lfs-gdrive install` antes do push. Os arquivos são enviados ao Drive antes
+das referências Git, usando as mesmas credenciais e variáveis do helper.
+Outros remotes mantêm sua configuração LFS, inclusive quando um mesmo remote
+usa outro servidor para fetch e o Drive para push.
 
 O próprio `git push` mostra a porcentagem pelos **bytes de cada arquivo**:
 
@@ -150,12 +151,15 @@ objeto já existente no Drive também informa progresso. A verificação inicial
 do arquivo local e a autenticação acontecem antes da transferência e podem
 manter os contadores em zero por algum tempo.
 
-Se já havia configurado LFS, após atualizar o helper execute novamente
-`git-lfs-gdrive install drive` para atualizar o hook. Hooks personalizados são
-preservados; o instalador informa um conflito se precisar de integração manual.
+Após atualizar o helper, a preparação também é automática no próximo push de
+repositórios existentes. Hooks personalizados, diretórios de hooks externos e
+endpoints LFS conflitantes interrompem a preparação automática sem sobrescrever
+essas configurações.
+Repositórios sem arquivos LFS continuam funcionando sem instalar Git LFS.
 
 Para clonar um repositório com LFS, baixe primeiro os ponteiros e depois os
-arquivos. A configuração do agente é local e não é copiada pelo clone:
+arquivos. A preparação automática ocorre no push; o download ainda precisa da
+configuração local do agente, que não é copiada pelo clone:
 
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone gd://1AbCdEfGhIjKlMn meu-repositorio

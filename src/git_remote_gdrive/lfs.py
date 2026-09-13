@@ -64,8 +64,9 @@ def _build_store(remote: str, operation: str) -> LFSObjectStore:
 def _check_endpoint_overrides() -> None:
     # Git LFS gives lfs.url/pushurl precedence over remote-specific endpoints.
     # It also reads .lfsconfig from the worktree, index, or HEAD, in that order.
-    root = Path(_git("rev-parse", "--show-toplevel").stdout.strip())
-    if (root / ".lfsconfig").exists():
+    worktree = _git("rev-parse", "--show-toplevel", check=False)
+    root = Path(worktree.stdout.strip()) if worktree.returncode == 0 else None
+    if root is not None and (root / ".lfsconfig").exists():
         config_source = ["--file", str(root / ".lfsconfig")]
     elif _git("cat-file", "-e", ":.lfsconfig", check=False).returncode == 0:
         config_source = ["--blob", ":.lfsconfig"]
@@ -81,13 +82,35 @@ def _check_endpoint_overrides() -> None:
                 )
 
 
-def install(remote: str) -> None:
-    download_folder = _folder_id(remote, "download", allow_url=False)
-    upload_folder = _folder_id(remote, "upload", allow_url=False)
-    version = _git("lfs", "version").stdout
+def _check_lfs_version(version: str) -> None:
     match = re.search(r"git-lfs/(\d+)\.(\d+)\.(\d+)", version)
     if match is None or tuple(map(int, match.groups())) < (3, 7, 1):
         raise ConfigurationError("Git LFS 3.7.1 or newer is required")
+
+
+def prepare_push(remote: str) -> None:
+    """Prepare LFS before Git runs pre-push; leave ordinary repositories alone."""
+    version = _git("lfs", "version", check=False)
+    if version.returncode:
+        return
+    # Include other branches and historical pointers, not just the checkout.
+    if not _git("lfs", "ls-files", "--all", "--name-only").stdout.strip():
+        return
+    _check_lfs_version(version.stdout)
+    _check_endpoint_overrides()
+    key = f"remote.{remote}.lfspushurl"
+    endpoint = _git("config", "--get", key, check=False).stdout.strip()
+    if endpoint and not endpoint.startswith("https://git-remote-gdrive.invalid/"):
+        raise ConfigurationError(
+            f"{key} overrides Drive LFS uploads; remove it to use automatic Drive LFS"
+        )
+    install_lfs_hooks(_git)
+
+
+def install(remote: str) -> None:
+    download_folder = _folder_id(remote, "download", allow_url=False)
+    upload_folder = _folder_id(remote, "upload", allow_url=False)
+    _check_lfs_version(_git("lfs", "version").stdout)
     _check_endpoint_overrides()
     install_lfs_hooks(_git)
     settings = {

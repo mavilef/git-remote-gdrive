@@ -37,7 +37,7 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.git(self.source, "config", "lfs.transfer.maxretries", "1")
         self.git(self.source, "config", "lfs.transfer.maxretrydelay", "0")
         self.git(self.source, "remote", "add", "drive", "gd://repo")
-        self.command(self.source, "git-lfs-gdrive", "install", "drive")
+        self.git(self.source, "lfs", "install", "--local")
         self.git(self.source, "lfs", "track", "*.bin")
 
     def command(self, directory, *arguments, environment=None, expect_success=True):
@@ -153,6 +153,7 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         )
         assert_progress(upload_log, "upload")
 
+        self.command(self.source, "git-lfs-gdrive", "install", "drive")
         retry_log = self.base / "retry-progress.log"
         self.git(
             self.source, "lfs", "push", "--all", "drive",
@@ -181,6 +182,7 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         objects = self.drive / "repo" / ".git-remote-gdrive" / "lfs" / "objects"
         self.assertFalse(objects.exists())
 
+        self.command(self.source, "git-lfs-gdrive", "install", "drive")
         self.git(self.source, "lfs", "push", "--all", "drive")
         clone = self.clone_drive()
         self.git(clone, "lfs", "fetch", "--all", "origin")
@@ -193,9 +195,17 @@ class TestGitLFSEndToEnd(unittest.TestCase):
     def test_git_push_reports_byte_percentage_and_sets_upstream(self):
         binary = bytes(range(256)) * (64 * 1024) + b"last byte"
         self.commit_binary(binary, "binary with visible byte progress")
+        hook = self.source / ".git/hooks/pre-push"
+        self.assertNotIn(b"git-lfs-gdrive", hook.read_bytes())
 
         process = self.git(self.source, "push", "-u", "drive", "main")
 
+        self.assertIn(b"git-lfs-gdrive pre-push", hook.read_bytes())
+        endpoints = self.git(
+            self.source, "config", "--local", "--get-regexp", r"\.(lfsurl|lfspushurl)$",
+            expect_success=False,
+        )
+        self.assertEqual(endpoints.stdout, "")
         percentages = [
             float(value)
             for value in re.findall(
@@ -224,6 +234,137 @@ class TestGitLFSEndToEnd(unittest.TestCase):
         self.git(clone, "lfs", "pull", "origin")
         self.assertEqual((clone / "asset.bin").read_bytes(), binary)
         self.git(clone, "lfs", "fsck")
+
+    def test_direct_url_push_installs_a_missing_hook_without_creating_remotes(self):
+        binary = b"direct URL upload\x00" * 1024
+        oid = self.commit_binary(binary, "binary without pre-push hook")
+        hook = self.source / ".git/hooks/pre-push"
+        hook.unlink()
+        self.git(self.source, "remote", "remove", "drive")
+        (self.drive / "explicit").mkdir()
+
+        for url, folder in (("gd://repo", "repo"), ("gdrive::explicit", "explicit")):
+            with self.subTest(url=url):
+                result = self.git(self.source, "push", url, "main")
+                self.assertIn("LFS upload asset.bin:", result.stderr)
+                remote_object = (
+                    self.drive / folder / ".git-remote-gdrive" / "lfs" / "objects"
+                    / oid[:2] / oid
+                )
+                self.assertEqual(remote_object.read_bytes(), binary)
+        self.assertIn(b"git-lfs-gdrive pre-push", hook.read_bytes())
+        self.assertEqual(self.git(self.source, "remote").stdout, "")
+
+    def test_auto_setup_finds_lfs_on_pushed_branch_when_head_has_no_pointers(self):
+        binary = b"LFS on another branch\x00" * 1024
+        oid = self.commit_binary(binary, "binary on main")
+        main = self.git(self.source, "rev-parse", "main").stdout.strip()
+        self.git(self.source, "checkout", "--orphan", "plain")
+        self.git(self.source, "rm", "-rf", ".")
+        (self.source / "plain.txt").write_text("No LFS files here.\n", encoding="utf-8")
+        self.git(self.source, "add", "plain.txt")
+        self.git(self.source, "commit", "--quiet", "-m", "plain branch")
+        self.assertEqual(self.git(self.source, "lfs", "ls-files").stdout, "")
+        hook = self.source / ".git/hooks/pre-push"
+        hook.unlink()
+
+        result = self.git(self.source, "push", "drive", "main")
+
+        self.assertIn("LFS upload asset.bin:", result.stderr)
+        self.assertIn(b"git-lfs-gdrive pre-push", hook.read_bytes())
+        remote_object = (
+            self.drive / "repo" / ".git-remote-gdrive" / "lfs" / "objects" / oid[:2] / oid
+        )
+        self.assertEqual(remote_object.read_bytes(), binary)
+        self.assertEqual(
+            self.git(self.source, "ls-remote", "drive", "refs/heads/main").stdout,
+            f"{main}\trefs/heads/main\n",
+        )
+
+    def test_auto_setup_preserves_external_fetch_endpoint_with_drive_push_url(self):
+        binary = b"mixed remote upload\x00" * 1024
+        oid = self.commit_binary(binary, "binary for Drive push URL")
+        fetch_url = "https://example.invalid/repository.git"
+        lfs_url = "https://lfs.example.invalid/repository"
+        self.git(self.source, "remote", "set-url", "drive", fetch_url)
+        self.git(self.source, "remote", "set-url", "--push", "drive", "gd://repo")
+        self.git(self.source, "config", "remote.drive.lfsurl", lfs_url)
+
+        result = self.git(self.source, "push", "drive", "main")
+
+        self.assertIn("LFS upload asset.bin:", result.stderr)
+        self.assertEqual(
+            self.git(self.source, "remote", "get-url", "drive").stdout.strip(), fetch_url,
+        )
+        self.assertEqual(
+            self.git(self.source, "config", "--get", "remote.drive.lfsurl").stdout.strip(),
+            lfs_url,
+        )
+        self.assertNotEqual(self.git(
+            self.source, "config", "--get", "remote.drive.lfspushurl", expect_success=False,
+        ).returncode, 0)
+        remote_object = (
+            self.drive / "repo" / ".git-remote-gdrive" / "lfs" / "objects" / oid[:2] / oid
+        )
+        self.assertEqual(remote_object.read_bytes(), binary)
+
+    def test_read_operations_do_not_install_or_configure_drive_lfs(self):
+        self.commit_binary(b"local binary\x00" * 1024, "unpublished binary")
+        configuration = (self.source / ".git/config").read_bytes()
+        hook = (self.source / ".git/hooks/pre-push").read_bytes()
+
+        self.git(self.source, "ls-remote", "drive")
+        self.git(self.source, "fetch", "drive")
+        clone = self.base / "read-clone"
+        self.git(self.base, "clone", "--no-checkout", "gd://repo", str(clone))
+
+        self.assertEqual((self.source / ".git/config").read_bytes(), configuration)
+        self.assertEqual((self.source / ".git/hooks/pre-push").read_bytes(), hook)
+        self.assertFalse((clone / ".git/hooks/pre-push").exists())
+        self.assertNotIn(b"git-remote-gdrive.invalid", (clone / ".git/config").read_bytes())
+
+    def test_auto_setup_preserves_custom_hook_and_rejects_lfs_push(self):
+        self.commit_binary(b"custom hook binary\x00" * 1024, "unpublished binary")
+        hook = self.source / ".git/hooks/pre-push"
+        content = b"#!/bin/sh\nprintf 'custom hook\\n'\n"
+        hook.write_bytes(content)
+        configuration = (self.source / ".git/config").read_bytes()
+
+        result = self.git(self.source, "push", "drive", "main", expect_success=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Hook already exists", result.stderr)
+        self.assertEqual(hook.read_bytes(), content)
+        self.assertEqual((self.source / ".git/config").read_bytes(), configuration)
+        self.assertEqual(self.git(self.source, "ls-remote", "drive").stdout, "")
+
+    def test_auto_setup_preserves_conflicting_endpoint_overrides(self):
+        self.commit_binary(b"endpoint override binary\x00" * 1024, "unpublished binary")
+        hook = (self.source / ".git/hooks/pre-push").read_bytes()
+        endpoint = "https://lfs.example.invalid/repository"
+        for key in ("lfs.url", "lfs.pushurl", "remote.drive.lfspushurl", ".lfsconfig"):
+            with self.subTest(key=key):
+                config = self.source / ".lfsconfig"
+                if key == ".lfsconfig":
+                    self.git(self.source, "config", "--file", str(config), "lfs.url", endpoint)
+                else:
+                    self.git(self.source, "config", key, endpoint)
+                configuration = (self.source / ".git/config").read_bytes()
+
+                result = self.git(
+                    self.source, "push", "drive", "main", expect_success=False,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("lfs.url" if key == ".lfsconfig" else key, result.stderr)
+                self.assertEqual((self.source / ".git/config").read_bytes(), configuration)
+                self.assertEqual((self.source / ".git/hooks/pre-push").read_bytes(), hook)
+                self.assertEqual(self.git(self.source, "ls-remote", "drive").stdout, "")
+                if key == ".lfsconfig":
+                    self.assertIn(endpoint, config.read_text())
+                    config.unlink()
+                else:
+                    self.git(self.source, "config", "--unset", key)
 
     def test_failed_upload_does_not_advance_git_refs(self):
         self.commit_binary(b"published\x00" * 1024, "published binary")
