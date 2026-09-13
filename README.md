@@ -252,7 +252,7 @@ migração do histórico, falha de upload e isolamento entre remotes. São ignor
 se Git LFS não estiver instalado; a CI exige sua presença.
 
 A CI gera e instala um wheel em um checkout limpo e executa a suíte em Python
-3.10 e 3.14. Para gerar um pacote de distribuição, use também um checkout limpo,
+3.14. Para gerar um pacote de distribuição, use também um checkout limpo,
 sem artefatos antigos em `build/`:
 
 ```bash
